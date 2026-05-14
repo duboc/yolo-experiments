@@ -303,3 +303,47 @@ soccer_ball/
 - **Risk: largest-box assumption breaks in multi-ball scenes** — accept; this is a kickup detector, single ball is the use case. Document.
 - **Risk: model.track() may be slower than predict** — empirically a few percent overhead. Worth it for blur robustness.
 - **Risk: trail clutter** — fixed length (30 frames), fading alpha; user can disable via `show_label` toggle (no, that's wrong). Add a separate `show_trail` toggle? Skip for now to keep trackbar count manageable; trail is small visual cost.
+
+---
+
+# Plan: Capture pipeline upgrades (round 8)
+
+## Context
+
+Capture today is doing the bare minimum — AVFoundation backend + MJPG fourcc + ThreadedGrabber's "always latest" semantics. For kickup detection the two real bottlenecks left are motion blur (auto-exposure picks 1/30s shutter and smears the ball) and sample density per bounce (default 30 FPS gives ~6 frames per kickup arc). User selected three upgrades:
+
+1. **Manual exposure + AF/WB lock** — best-effort property setting with success/failure logging. Works on most external USB cams; built-in MacBook cameras ignore some properties.
+2. **Capture presets + 60fps** — `--capture-preset {low,balanced,high}` bundles resolution + target FPS. Defaults: low=640×480@60, balanced=1280×720@60, high=1920×1080@30.
+3. **Dropped-frames diagnostic** — overlay shows effective inference FPS vs camera FPS so the user can see when YOLO is throttling them below camera potential.
+
+Skipped this round: `--record path.mp4` (deferred).
+
+## Design
+
+- **`CaptureConfig` dataclass** in `capture.py` — width, height, fps, exposure, focus, auto_exposure, auto_focus, auto_wb, wb_temp. All optional; `None` = leave camera default.
+- **`apply_capture_config(cap, config) -> dict[str, bool]`** — applies each non-None field, returns a map of `prop_name → success` so the loop can log which properties the camera actually accepted.
+- **`CAPTURE_PRESETS` constant** — `{low, balanced, high}` → `CaptureConfig`. CLI overlays on top.
+- **`GrabberStats`** — pure class tracking `captured` / `unique_reads`, exposing `drop_rate`. ThreadedGrabber instantiates one and updates it on capture / read. No threading in the stats class itself, so it tests cleanly.
+- **`overlay_fps(frame, fps, cam_fps=None, drop_rate=None)`** — extended signature appends `(cam 60, drop 35%)` when the new args are non-None.
+
+## Checklist
+
+- [x] TDD: `CaptureConfig` defaults + `apply_capture_config(fake_cap, config)` returns dict-of-bool. Cover: all fields None → no calls; auto_exposure=False → manual mode prop set; failed `cap.set()` → False in returned dict.
+- [x] TDD: `CAPTURE_PRESETS` lookup + `merge_capture_config(base, override)` overlays non-None fields.
+- [x] TDD: `GrabberStats` — `on_capture` increments captured; `on_read` increments unique_reads only when captured > last_read; `drop_rate` formula correct; zero-state returns 0.0.
+- [x] Implement `CaptureConfig`, `apply_capture_config`, `CAPTURE_PRESETS`, `merge_capture_config`, `GrabberStats` in `soccer_ball/capture.py`.
+- [x] Wire `GrabberStats` into `ThreadedGrabber`: tick on capture, tick on read; expose `stats` and `capture_fps` (via internal FpsMeter).
+- [x] TDD: `overlay_fps` extended signature — original 1-arg call still works; passing cam_fps/drop_rate changes output; defaults to bare FPS string.
+- [x] Implement extended `overlay_fps` in `soccer_ball/detector.py`.
+- [x] `detect.py`:
+  - Add CLI flags: `--fps`, `--exposure`, `--focus`, `--no-auto-exposure`, `--no-auto-focus`, `--no-auto-wb`, `--wb-temp`, `--capture-preset {low,balanced,high}`.
+  - Replace inline `cap.set(...)` block in `_open_capture` with `apply_capture_config`. Log the success-map.
+  - Pass `grabber.capture_fps` and `grabber.stats.drop_rate` into `overlay_fps`.
+- [x] Update README — capture preset table, exposure/focus flags, drop-rate overlay.
+
+## Critique
+
+- **Risk: built-in MacBook camera ignores manual exposure / focus / WB** — mitigated by best-effort + per-property success logging so the user knows which knobs took effect.
+- **Risk: 60fps preset asks for more than camera supports** — `cap.set(CAP_PROP_FPS, 60)` returns the actual rate; we log mismatch.
+- **Risk: drop-rate overlay misleading at startup** — first ~30 frames have small denominator. Skip rendering when `captured < 10`.
+- **Risk: extra CLI flags clutter --help** — 8 new flags, but they're grouped logically. Keep TUI lean (don't prompt for these).

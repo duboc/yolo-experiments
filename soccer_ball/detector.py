@@ -103,9 +103,19 @@ _FPS_COLOR = (0, 255, 255)
 _FPS_BG = (0, 0, 0)
 
 
-def overlay_fps(frame: np.ndarray, fps: float) -> np.ndarray:
+def overlay_fps(
+    frame: np.ndarray,
+    fps: float,
+    cam_fps: float | None = None,
+    drop_rate: float | None = None,
+) -> np.ndarray:
     out = frame.copy()
     text = f"FPS: {fps:5.1f}"
+    if cam_fps is not None:
+        text = f"{text}  (cam {cam_fps:4.0f}"
+        if drop_rate is not None:
+            text = f"{text}  drop {drop_rate * 100:3.0f}%"
+        text = f"{text})"
     (tw, th), baseline = cv2.getTextSize(text, _FONT, 0.6, 2)
     cv2.rectangle(out, (5, 5), (5 + tw + 6, 5 + th + baseline + 4), _FPS_BG, cv2.FILLED)
     cv2.putText(out, text, (8, 5 + th + 2), _FONT, 0.6, _FPS_COLOR, 2, cv2.LINE_AA)

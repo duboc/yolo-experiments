@@ -170,6 +170,19 @@ class TestOverlayFps:
         out = overlay_fps(frame, 0.0)
         assert not np.array_equal(out, frame)
 
+    def test_cam_fps_changes_output(self):
+        frame = self._blank()
+        bare = overlay_fps(frame, 30.0)
+        with_cam = overlay_fps(frame, 30.0, cam_fps=60.0)
+        # The two outputs differ because the text differs.
+        assert not np.array_equal(bare, with_cam)
+
+    def test_drop_rate_changes_output(self):
+        frame = self._blank()
+        without_drop = overlay_fps(frame, 30.0, cam_fps=60.0)
+        with_drop = overlay_fps(frame, 30.0, cam_fps=60.0, drop_rate=0.5)
+        assert not np.array_equal(without_drop, with_drop)
+
 
 class TestOverlaySettings:
     def _blank(self) -> np.ndarray:

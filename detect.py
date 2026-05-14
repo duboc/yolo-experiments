@@ -28,7 +28,14 @@ from soccer_ball.cameras import (
     pick_camera_interactive,
     probe_cameras,
 )
-from soccer_ball.capture import FpsMeter, ThreadedGrabber
+from soccer_ball.capture import (
+    CAPTURE_PRESETS,
+    CaptureConfig,
+    FpsMeter,
+    ThreadedGrabber,
+    apply_capture_config,
+    merge_capture_config,
+)
 from soccer_ball.detector import (
     annotate_frame,
     filter_by_area,
@@ -85,6 +92,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Inference device. Default: auto (mps > cuda > cpu).")
     p.add_argument("--width", type=int, default=None, help="Camera width hint.")
     p.add_argument("--height", type=int, default=None, help="Camera height hint.")
+    p.add_argument("--fps", type=int, default=None, help="Target capture FPS hint.")
+    p.add_argument("--capture-preset", choices=list(CAPTURE_PRESETS), default=None,
+                   dest="capture_preset",
+                   help="Bundle of width/height/fps. low=640x480@60, balanced=1280x720@60, high=1920x1080@30.")
+    p.add_argument("--exposure", type=float, default=None,
+                   help="Manual exposure value (camera-specific scale; e.g. -7 on most macOS USB cams).")
+    p.add_argument("--no-auto-exposure", action="store_true", dest="no_auto_exposure",
+                   help="Disable camera auto-exposure (best-effort).")
+    p.add_argument("--focus", type=float, default=None,
+                   help="Manual focus distance (camera-specific scale).")
+    p.add_argument("--no-auto-focus", action="store_true", dest="no_auto_focus",
+                   help="Disable camera auto-focus (best-effort).")
+    p.add_argument("--wb-temp", type=float, default=None, dest="wb_temp",
+                   help="Manual white-balance temperature in Kelvin.")
+    p.add_argument("--no-auto-wb", action="store_true", dest="no_auto_wb",
+                   help="Disable camera auto white-balance (best-effort).")
     p.add_argument("--half", action=argparse.BooleanOptionalAction, default=None,
                    help="Use FP16 half-precision. Default: True on mps/cuda, forced False on cpu. Pass --no-half to disable.")
     p.add_argument("--preset", default="default", help="Preset name to load and save. Default: default.")
@@ -150,16 +173,34 @@ def _resolve_source(launch_cfg: LaunchConfig, probe_max: int) -> int | str:
     return pick_camera_interactive(cams)
 
 
-def _open_capture(source: int | str, width: int | None, height: int | None) -> cv2.VideoCapture:
+def _build_capture_config(args: argparse.Namespace, launch_cfg: LaunchConfig) -> CaptureConfig:
+    base = CAPTURE_PRESETS.get(args.capture_preset, CaptureConfig()) if args.capture_preset else CaptureConfig()
+    # width/height come through LaunchConfig (CLI + TUI both write there);
+    # other capture-only fields are CLI-only so we read them from args.
+    overrides = CaptureConfig(
+        width=launch_cfg.width,
+        height=launch_cfg.height,
+        fps=args.fps,
+        exposure=args.exposure,
+        focus=args.focus,
+        wb_temp=args.wb_temp,
+        auto_exposure=False if args.no_auto_exposure else None,
+        auto_focus=False if args.no_auto_focus else None,
+        auto_wb=False if args.no_auto_wb else None,
+    )
+    return merge_capture_config(base, overrides)
+
+
+def _open_capture(source: int | str, capture_config: CaptureConfig) -> cv2.VideoCapture:
     backend = getattr(cv2, "CAP_AVFOUNDATION", cv2.CAP_ANY)
     cap = cv2.VideoCapture(source, backend) if isinstance(source, int) else cv2.VideoCapture(source)
     if isinstance(source, int):
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if width is not None:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        if height is not None:
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        results = apply_capture_config(cap, capture_config)
+        for prop_name, success in results.items():
+            level = log.info if success else log.warning
+            level("capture[%s] applied: %s", prop_name, success)
     return cap
 
 
@@ -208,13 +249,14 @@ def _run_loop(
     args: argparse.Namespace,
     device: str,
     source: int | str,
+    capture_config: CaptureConfig,
 ) -> int:
     from ultralytics import YOLO
 
     log.info("Loading model %s on device=%s (half=%s)", launch_cfg.model, device, launch_cfg.half)
     model = YOLO(launch_cfg.model)
 
-    cap = _open_capture(source, launch_cfg.width, launch_cfg.height)
+    cap = _open_capture(source, capture_config)
     if not cap.isOpened():
         log.error("Failed to open source %r", source)
         return 1
@@ -353,7 +395,9 @@ def _run_loop(
 
                 fps.tick()
                 if live.show_fps:
-                    annotated = overlay_fps(annotated, fps.value)
+                    cam_fps = grabber.capture_fps if grabber.capture_fps > 0 else None
+                    drop = grabber.stats.drop_rate if grabber.stats.captured >= 10 else None
+                    annotated = overlay_fps(annotated, fps.value, cam_fps=cam_fps, drop_rate=drop)
                 if live.show_settings:
                     annotated = overlay_settings(
                         annotated,
@@ -411,7 +455,8 @@ def main(argv: list[str] | None = None) -> int:
         launch_cfg = replace(launch_cfg, half=resolved_half)
 
     source = _resolve_source(launch_cfg, args.probe_max)
-    return _run_loop(launch_cfg, runtime, args, device, source)
+    capture_config = _build_capture_config(args, launch_cfg)
+    return _run_loop(launch_cfg, runtime, args, device, source, capture_config)
 
 
 if __name__ == "__main__":

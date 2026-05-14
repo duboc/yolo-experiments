@@ -173,6 +173,14 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--device`        | `auto`        | `auto` / `mps` / `cuda` / `cpu`                            |
 | `--width`         | unset         | Camera width hint                                          |
 | `--height`        | unset         | Camera height hint                                         |
+| `--fps`           | unset         | Target capture FPS hint                                    |
+| `--capture-preset`| unset         | `low` / `balanced` / `high` — bundles width+height+fps     |
+| `--exposure`      | unset         | Manual exposure value (camera-specific scale)              |
+| `--no-auto-exposure` | off        | Disable camera auto-exposure (best-effort)                 |
+| `--focus`         | unset         | Manual focus distance (camera-specific scale)              |
+| `--no-auto-focus` | off           | Disable camera auto-focus (best-effort)                    |
+| `--wb-temp`       | unset         | Manual white-balance temperature in Kelvin                 |
+| `--no-auto-wb`    | off           | Disable camera auto white-balance (best-effort)            |
 | `--half`          | off           | Use FP16 half-precision                                    |
 | `--preset`        | `default`     | Preset to load and save with `s`                           |
 
@@ -217,6 +225,52 @@ for `cuda` will fail.
 `--half` defaults to `True`. On CPU it's automatically forced off (PyTorch
 CPU FP16 inference is unsupported / much slower). Pass `--no-half` to opt
 out on a GPU device for a small accuracy bump.
+
+## Camera capture
+
+The capture pipeline is tunable from the CLI for two real wins on fast-motion
+detection:
+
+### Presets
+
+```bash
+python detect.py --capture-preset low        # 640x480 @ 60 fps  (best for kickup)
+python detect.py --capture-preset balanced   # 1280x720 @ 60 fps
+python detect.py --capture-preset high       # 1920x1080 @ 30 fps
+```
+
+Higher FPS gives the kickup counter more samples per bounce; lower resolution
+keeps inference fast and trades a sharper temporal signal for spatial detail.
+
+Individual `--width`, `--height`, `--fps` flags overlay on top of any preset.
+
+### Manual exposure / focus / WB (motion-blur fix)
+
+Auto-exposure on most webcams ramps shutter to 1/30s in low light, smearing a
+fast ball over multiple pixels per frame. Lock the camera to a short exposure
+to freeze motion:
+
+```bash
+python detect.py --no-auto-exposure --exposure -7    # short shutter, may be dark
+python detect.py --no-auto-focus --focus 120         # fixed focus, no hunting
+python detect.py --no-auto-wb --wb-temp 4500         # fixed colors
+```
+
+These are best-effort: the loop logs which properties the camera accepted.
+Built-in MacBook cameras typically ignore exposure/focus controls; external
+USB cameras usually honour them.
+
+### Drop-rate diagnostic
+
+The FPS overlay grows when the threaded grabber has stats:
+
+```
+FPS:  18.3  (cam   60  drop 70%)
+```
+
+`cam` is the camera's measured capture rate; `drop` is the fraction of camera
+frames the inference loop never saw (inference is the bottleneck). High drop
+rate means: lower `--imgsz`, switch to a smaller model, or enable `--half`.
 
 ## Why a threaded frame grabber?
 
