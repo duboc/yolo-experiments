@@ -14,9 +14,11 @@ from soccer_ball.detector import (
     format_label,
     overlay_fps,
     overlay_kickup,
+    overlay_pose,
     overlay_settings,
     overlay_trail,
 )
+from soccer_ball.pose import BodyPart
 
 
 class TestFilterSportsBall:
@@ -293,3 +295,40 @@ class TestOverlayKickup:
         flashed = overlay_kickup(frame, count=5, just_kicked=True)
         # The two outputs must visibly differ.
         assert not np.array_equal(normal, flashed)
+
+    def test_part_label_changes_output(self):
+        frame = self._blank()
+        without_part = overlay_kickup(frame, count=5, just_kicked=True)
+        with_part = overlay_kickup(frame, count=5, just_kicked=True, part=BodyPart.FOOT)
+        assert not np.array_equal(without_part, with_part)
+
+
+class TestOverlayPose:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def _parts(self) -> dict[BodyPart, list[tuple[int, int]]]:
+        return {
+            BodyPart.FOOT: [(100, 400)],
+            BodyPart.KNEE: [(150, 300)],
+            BodyPart.HEAD: [(200, 100)],
+        }
+
+    def test_does_not_mutate(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_pose(frame, self._parts(), proximity_px=80)
+        np.testing.assert_array_equal(frame, original)
+
+    def test_empty_parts_returns_unchanged_copy(self):
+        frame = self._blank()
+        empty: dict[BodyPart, list[tuple[int, int]]] = {bp: [] for bp in BodyPart}
+        out = overlay_pose(frame, empty, proximity_px=80)
+        np.testing.assert_array_equal(out, frame)
+        assert out is not frame
+
+    def test_draws_when_parts_present(self):
+        frame = self._blank()
+        out = overlay_pose(frame, self._parts(), proximity_px=80)
+        assert not np.array_equal(out, frame)
+        assert out.shape == frame.shape and out.dtype == frame.dtype

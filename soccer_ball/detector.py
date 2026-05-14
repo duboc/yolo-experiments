@@ -9,6 +9,8 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from soccer_ball.pose import BodyPart
+
 # COCO class index for "sports ball". Soccer balls are labelled under this
 # umbrella class along with basketballs, baseballs, etc.
 COCO_SPORTS_BALL_ID = 32
@@ -176,10 +178,21 @@ _KICKUP_FLASH_COLOR = (0, 255, 0)
 _KICKUP_BG = (0, 0, 0)
 
 
-def overlay_kickup(frame: np.ndarray, count: int, just_kicked: bool) -> np.ndarray:
-    """Render a center-top KICKUPS counter; flashes green on the bounce frame."""
+def overlay_kickup(
+    frame: np.ndarray,
+    count: int,
+    just_kicked: bool,
+    part: BodyPart | None = None,
+) -> np.ndarray:
+    """Render a center-top KICKUPS counter; flashes green on the bounce frame.
+
+    When ``part`` is provided and ``just_kicked`` is True, the flash text
+    appends the body part, e.g. "KICKUPS: 7 (foot)".
+    """
     out = frame.copy()
     text = f"KICKUPS: {count}"
+    if just_kicked and part is not None:
+        text = f"{text} ({part.value})"
     color = _KICKUP_FLASH_COLOR if just_kicked else _KICKUP_COLOR
     scale = 1.2 if just_kicked else 1.0
     thickness = 3
@@ -194,4 +207,28 @@ def overlay_kickup(frame: np.ndarray, count: int, just_kicked: bool) -> np.ndarr
     cv2.rectangle(bg, (x - pad, y - th - pad), (x + tw + pad, y + baseline + pad), _KICKUP_BG, cv2.FILLED)
     cv2.addWeighted(bg, 0.55, out, 0.45, 0, out)
     cv2.putText(out, text, (x, y), _FONT, scale, color, thickness, cv2.LINE_AA)
+    return out
+
+
+_POSE_COLORS = {
+    "foot": (255, 255, 0),    # cyan
+    "knee": (0, 255, 255),    # yellow
+    "head": (255, 0, 255),    # magenta
+}
+
+
+def overlay_pose(
+    frame: np.ndarray,
+    parts: dict[BodyPart, list[tuple[int, int]]],
+    proximity_px: int,
+) -> np.ndarray:
+    """Draw colored dots per body part with an outlined proximity radius."""
+    out = frame.copy()
+    if not any(parts.values()):
+        return out
+    for part, points in parts.items():
+        color = _POSE_COLORS.get(part.value, (200, 200, 200))
+        for x, y in points:
+            cv2.circle(out, (int(x), int(y)), 5, color, thickness=-1, lineType=cv2.LINE_AA)
+            cv2.circle(out, (int(x), int(y)), int(proximity_px), color, thickness=1, lineType=cv2.LINE_AA)
     return out

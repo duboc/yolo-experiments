@@ -38,6 +38,8 @@ class RuntimeSettings:
     show_label: bool = True
     show_settings: bool = True
     min_area_pct: float = 1.0  # Drop boxes smaller than this % of frame area
+    proximity_px: int = 80     # Foot/knee/head proximity radius for kickup gating
+    show_pose: bool = True     # Render pose-keypoint overlay
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

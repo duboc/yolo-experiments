@@ -71,6 +71,8 @@ Then the camera picker, then the live window plus a `Settings` window with track
 | `show_label`   | 0/1                               | Box labels on/off                  |
 | `show_settings`| 0/1                               | Settings overlay (top-right) on/off |
 | `min_area_pct` | 0–100 → 0.0–10.0%                 | Drop boxes below this % of frame area (kickup focus) |
+| `proximity_px` | 0–300 px (direct)                 | Foot/knee/head proximity radius for pose gating |
+| `show_pose`    | 0/1                               | Render pose keypoint dots + proximity circles    |
 
 Drag a slider, see the effect immediately on the next frame.
 
@@ -106,14 +108,29 @@ python detect.py --preset indoor      # load presets/indoor.json on startup
 
 The detector is wired for soccer ball juggling out of the box:
 
-- **Tracker** — uses Ultralytics' `model.track()` with ByteTrack so brief
-  motion-blur drops don't lose the ball mid-bounce.
+- **Tracker** — uses Ultralytics' `model.track()` with ByteTrack and a
+  `SingleBallTracker` that locks onto one ID and follows it across frames,
+  so brief motion-blur drops don't lose the ball mid-bounce and a second
+  ball in the scene can't hijack the counter.
 - **Larger-ball focus** — `min_area_pct` drops detections smaller than 1% of
   the frame area by default, so distant balls in the background don't
   distract the counter. Drag the slider to tune.
-- **Bounce counter** — center-top "KICKUPS: N" overlay. Increments each time
-  the ball's smoothed vertical velocity flips from falling to rising. Flashes
-  green for one frame on each new kick.
+- **Acceleration-spike gate** — a bounce only counts when the smoothed
+  vertical velocity reverses *and* the velocity-change magnitude clears a
+  threshold. Slow rollovers (ball drifting off a hand) no longer count.
+- **Resolution-aware velocity floor** — the minimum-velocity threshold
+  scales with frame height (~0.5% of height per frame), so the same
+  juggling motion behaves consistently on 720p, 1080p, and 4K.
+- **Pose-gated counter** — a second model (`yolo26n-pose.pt` by default)
+  runs in parallel; each bounce only counts when a foot, knee, or head
+  keypoint is within `--proximity-px` (default 80px) of the ball at the
+  bounce frame. Pure floor bounces, throws, and balls rolling off a desk
+  no longer fool the counter.
+- **Per-body-part breakdown** — `KICKUPS: 12 (foot:8 knee:3 head:1)` shown
+  in the settings panel; the flash text reads `KICKUPS: 12 (knee)` on the
+  frame the bounce happens.
+- **Pose overlay** — colored dots at each detected ankle / knee / head plus
+  the proximity radius. Toggle with the `show_pose` trackbar.
 - **Motion trail** — last 30 ball centroids drawn as fading orange dots so
   you can see the kickup arc.
 - **Auto-reset** — counter zeroes itself after ~30 frames with no detection
@@ -124,8 +141,11 @@ Tips for accuracy:
 - Keep the ball as the largest object in the frame (close-up shots help).
 - For a fast kickup loop, `--imgsz 480` cuts inference time and is plenty
   for a close-up ball.
-- If micro-jitter on the floor inflates the count, raise `min_area_pct` to
-  drop tiny far-away balls.
+- If pose proximity is misfiring, drag the `proximity_px` trackbar — bigger
+  is more permissive, smaller is stricter.
+- If your machine can't keep up with two models, `--no-pose` keeps the
+  Stage 1 wins (ID tracking, acceleration gate, resolution-aware velocity)
+  at full FPS but loses the floor-bounce filter.
 
 ## Keys
 
@@ -167,6 +187,9 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--ball-class`    | `32`    | COCO class id treated as the ball                |
 | `--agnostic-nms`  | off     | Class-agnostic NMS                               |
 | `--no-half`       | off     | Disable FP16 (default is on for mps/cuda)        |
+| `--proximity-px`  | `80`    | Foot/knee/head proximity radius (also live tunable) |
+| `--pose-model`    | `yolo26n-pose.pt` | Pose checkpoint for body-part gating  |
+| `--no-pose`       | off     | Disable pose-based gating (Stage 1 only)         |
 
 ### Workflow toggles
 

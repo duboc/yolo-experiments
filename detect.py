@@ -21,6 +21,7 @@ import time
 from dataclasses import replace
 
 import cv2
+import numpy as np
 
 from soccer_ball.cameras import (
     format_camera_menu,
@@ -34,11 +35,18 @@ from soccer_ball.detector import (
     filter_sports_ball,
     overlay_fps,
     overlay_kickup,
+    overlay_pose,
     overlay_settings,
     overlay_trail,
 )
 from soccer_ball.kickup import KickupCounter, MotionTrail
 from soccer_ball.devices import auto_device, resolve_half
+from soccer_ball.pose import (
+    BodyPart,
+    extract_body_keypoints,
+    nearest_body_part,
+)
+from soccer_ball.tracking import SingleBallTracker
 from soccer_ball.settings import (
     DEFAULT_PRESETS_DIR,
     LaunchConfig,
@@ -55,7 +63,7 @@ log = logging.getLogger("soccer_ball")
 _LAUNCH_FIELDS = {"source", "model", "device", "width", "height", "half", "preset"}
 _RUNTIME_FIELDS = {
     "conf", "iou", "max_det", "imgsz", "ball_class",
-    "agnostic_nms", "show_fps", "show_label",
+    "agnostic_nms", "show_fps", "show_label", "proximity_px",
 }
 
 
@@ -90,6 +98,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="COCO class id treated as the ball. Default: 32 (sports ball).")
     p.add_argument("--agnostic-nms", action="store_true", default=None, dest="agnostic_nms",
                    help="Use class-agnostic NMS.")
+    p.add_argument("--proximity-px", type=int, default=None, dest="proximity_px",
+                   help="Foot/knee/head proximity radius for kickup gating. Default: 80.")
+
+    # Pose model (Stage 2)
+    p.add_argument("--pose-model", default="yolo26n-pose.pt", dest="pose_model",
+                   help="Pose checkpoint for body-part gating. Default: yolo26n-pose.pt.")
+    p.add_argument("--no-pose", action="store_true",
+                   help="Disable pose-based kickup gating (Stage 1 only).")
 
     # Workflow toggles
     p.add_argument("--no-tui", action="store_true", help="Skip the pre-loop launch TUI.")
@@ -147,18 +163,32 @@ def _open_capture(source: int | str, width: int | None, height: int | None) -> c
     return cap
 
 
-def _settings_lines(launch_cfg: LaunchConfig, live: RuntimeSettings, device: str, model, kickups: int) -> list[str]:
+def _settings_lines(
+    launch_cfg: LaunchConfig,
+    live: RuntimeSettings,
+    device: str,
+    model,
+    counter: KickupCounter,
+    pose_model_name: str | None,
+) -> list[str]:
     class_name = "?"
     if hasattr(model, "names"):
         class_name = model.names.get(live.ball_class, "?") if isinstance(model.names, dict) else "?"
+    parts = counter.counts_by_part
+    breakdown = (
+        f"foot:{parts[BodyPart.FOOT]} knee:{parts[BodyPart.KNEE]} head:{parts[BodyPart.HEAD]}"
+        if pose_model_name is not None
+        else "pose off"
+    )
     return [
         f"model:    {launch_cfg.model}",
+        f"pose:     {pose_model_name or 'off'}",
         f"device:   {device}   half:{'y' if launch_cfg.half else 'n'}",
         f"conf:     {live.conf:.2f}   iou:{live.iou:.2f}",
         f"imgsz:    {live.imgsz}   max_det:{live.max_det}",
-        f"min_area: {live.min_area_pct:.1f}%   agn:{'y' if live.agnostic_nms else 'n'}",
+        f"min_area: {live.min_area_pct:.1f}%   prox:{live.proximity_px}px",
         f"class:    {live.ball_class} {class_name}",
-        f"kickups:  {kickups}",
+        f"kickups:  {counter.count}  ({breakdown})",
     ]
 
 
@@ -189,12 +219,25 @@ def _run_loop(
         log.error("Failed to open source %r", source)
         return 1
 
+    pose_model = None
+    pose_model_name = None if args.no_pose else args.pose_model
+    if pose_model_name is not None:
+        log.info("Loading pose model %s on device=%s", pose_model_name, device)
+        pose_model = YOLO(pose_model_name)
+
     fps = FpsMeter()
     main_window = "Soccer Ball Detector (q quit, s save preset, r reset kickups)"
     panel = _try_create_panel(settings, enabled=not args.no_trackbars and not args.no_display)
     last_ball_class: int | None = None
-    kickup = KickupCounter()
+    # Resolution-aware velocity floor + acceleration gate are sized to frame height
+    # at runtime; constructor uses sensible defaults derived from the plan.
+    kickup = KickupCounter(
+        min_velocity=1.0,
+        min_velocity_pct=0.005,
+        acceleration_threshold=2.0,
+    )
     trail = MotionTrail(max_len=30)
+    ball_tracker = SingleBallTracker(lose_after_frames=15)
 
     try:
         with ThreadedGrabber(cap) as grabber:
@@ -231,41 +274,93 @@ def _run_loop(
                 )
                 boxes = results[0].boxes
                 centroid: tuple[int, int] | None = None
-                if boxes is None or len(boxes) == 0:
-                    annotated = frame
-                else:
+                kept_xyxy = np.zeros((0, 4), dtype=np.float32)
+                kept_conf = np.zeros((0,), dtype=np.float32)
+                kept_ids: np.ndarray | None = None
+
+                if boxes is not None and len(boxes) > 0:
                     cls = boxes.cls.cpu().numpy().astype(int)
                     conf = boxes.conf.cpu().numpy()
                     xyxy = boxes.xyxy.cpu().numpy()
-                    kept_xyxy, kept_conf = filter_sports_ball(
-                        cls, conf, xyxy,
-                        ball_class_id=live.ball_class,
-                        conf_threshold=live.conf,
-                    )
-                    kept_xyxy, kept_conf = filter_by_area(
-                        kept_xyxy, kept_conf, live.min_area_pct, frame.shape,
-                    )
-                    if kept_xyxy.shape[0] > 0:
-                        # Pick the largest box for the kickup tracker.
-                        widths = kept_xyxy[:, 2] - kept_xyxy[:, 0]
-                        heights = kept_xyxy[:, 3] - kept_xyxy[:, 1]
-                        areas = widths * heights
-                        idx = int(areas.argmax())
-                        x1, y1, x2, y2 = kept_xyxy[idx]
-                        centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
-                    annotated = annotate_frame(frame, kept_xyxy, kept_conf, show_label=live.show_label)
+                    ids_full = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
 
-                kickup.update(y=float(centroid[1]) if centroid else None)
+                    class_mask = (cls == live.ball_class) & (conf >= live.conf)
+                    stage_xyxy = xyxy[class_mask]
+                    stage_conf = conf[class_mask]
+                    stage_ids = ids_full[class_mask] if ids_full is not None else None
+
+                    # Inline area filter so we can keep IDs aligned with boxes.
+                    if stage_xyxy.shape[0] > 0 and live.min_area_pct > 0:
+                        h, w = frame.shape[:2]
+                        min_pixels = (live.min_area_pct / 100.0) * h * w
+                        widths = stage_xyxy[:, 2] - stage_xyxy[:, 0]
+                        heights = stage_xyxy[:, 3] - stage_xyxy[:, 1]
+                        area_mask = (widths * heights) >= min_pixels
+                        kept_xyxy = stage_xyxy[area_mask]
+                        kept_conf = stage_conf[area_mask]
+                        kept_ids = stage_ids[area_mask] if stage_ids is not None else None
+                    else:
+                        kept_xyxy = stage_xyxy
+                        kept_conf = stage_conf
+                        kept_ids = stage_ids
+
+                # SingleBallTracker locks onto one ID across frames.
+                _, locked_box = ball_tracker.update(kept_ids, kept_xyxy)
+                if locked_box is not None:
+                    x1, y1, x2, y2 = locked_box
+                    centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+
+                annotated = annotate_frame(frame, kept_xyxy, kept_conf, show_label=live.show_label)
+
+                # Stage 1: update bounce counter with frame-height-aware threshold.
+                kickup.update(
+                    y=float(centroid[1]) if centroid else None,
+                    frame_height=frame.shape[0],
+                )
                 trail.append(centroid)
 
+                # Stage 2: pose inference + body-part gating.
+                body_parts: dict[BodyPart, list[tuple[int, int]]] = {bp: [] for bp in BodyPart}
+                if pose_model is not None:
+                    pose_results = pose_model.predict(
+                        frame,
+                        verbose=False,
+                        device=device,
+                        half=launch_cfg.half,
+                        classes=[0],  # person only
+                    )
+                    pose_kp = pose_results[0].keypoints
+                    if pose_kp is not None and pose_kp.xy is not None:
+                        body_parts = extract_body_keypoints(
+                            pose_kp.xy.cpu().numpy(),
+                            pose_kp.conf.cpu().numpy() if pose_kp.conf is not None else np.ones(pose_kp.xy.shape[:2]),
+                        )
+                if kickup.just_kicked:
+                    if pose_model is not None and centroid is not None:
+                        part = nearest_body_part(centroid, body_parts, live.proximity_px)
+                        kickup.credit_last(part)
+                    elif pose_model is None and centroid is not None:
+                        # Pose disabled: Stage 1 only — credit the count to "foot"
+                        # by convention so per-part totals still add up to count.
+                        kickup.credit_last(BodyPart.FOOT)
+
                 annotated = overlay_trail(annotated, list(trail))
-                annotated = overlay_kickup(annotated, kickup.count, kickup.just_kicked)
+                if pose_model is not None and live.show_pose:
+                    annotated = overlay_pose(annotated, body_parts, live.proximity_px)
+                annotated = overlay_kickup(
+                    annotated, kickup.count, kickup.just_kicked, kickup.last_part
+                )
 
                 fps.tick()
                 if live.show_fps:
                     annotated = overlay_fps(annotated, fps.value)
                 if live.show_settings:
-                    annotated = overlay_settings(annotated, _settings_lines(launch_cfg, live, device, model, kickup.count))
+                    annotated = overlay_settings(
+                        annotated,
+                        _settings_lines(
+                            launch_cfg, live, device, model, kickup, pose_model_name
+                        ),
+                    )
 
                 if args.no_display:
                     continue
@@ -279,6 +374,7 @@ def _run_loop(
                 if key == ord("r"):
                     kickup.reset()
                     trail.clear()
+                    ball_tracker.reset()
                     log.info("Kickup counter reset.")
     except KeyboardInterrupt:
         log.info("Interrupted by user.")

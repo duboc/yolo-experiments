@@ -93,6 +93,114 @@ class TestKickupCounter:
         assert c.count == 0
 
 
+class TestKickupAccelerationGate:
+    def test_slow_rollover_does_not_count(self):
+        # Very gentle bounce: small velocity, tiny acceleration. Must NOT count.
+        c = KickupCounter(min_velocity=0.5, acceleration_threshold=20.0)
+        # Slow fall then slow rise — small acceleration.
+        ys = list(range(100, 200, 1)) + list(range(200, 100, -1))
+        for y in ys:
+            c.update(y=float(y))
+        assert c.count == 0
+
+    def test_sharp_impact_counts(self):
+        # Ball is falling fast, then sharply reverses — large acceleration spike.
+        c = KickupCounter(min_velocity=0.5, acceleration_threshold=2.0)
+        # 30 frames of fast fall (v ≈ +20)
+        for y in range(100, 700, 20):
+            c.update(y=float(y))
+        # Sharp reversal: now rising fast (v ≈ -20). Acceleration ≈ -40.
+        for y in range(700, 100, -20):
+            c.update(y=float(y))
+        assert c.count == 1
+
+    def test_acceleration_default_does_not_break_existing(self):
+        # Without supplying acceleration_threshold, behavior matches the
+        # original test_one_full_kickup: classic counter still works.
+        c = KickupCounter()
+        for y in range(100, 500, 10):
+            c.update(y=float(y))
+        for y in range(500, 100, -10):
+            c.update(y=float(y))
+        assert c.count == 1
+
+
+class TestResolutionAwareVelocity:
+    def test_frame_height_scales_threshold(self):
+        # min_velocity_pct=0.01 → threshold = 0.01 * 1080 = 10.8 px/frame on 1080p.
+        # A "kickup" with 5px/frame motion should NOT count on 1080p.
+        c = KickupCounter(min_velocity=0.5, min_velocity_pct=0.01)
+        for y in range(100, 200, 5):
+            c.update(y=float(y), frame_height=1080)
+        for y in range(200, 100, -5):
+            c.update(y=float(y), frame_height=1080)
+        assert c.count == 0
+
+    def test_same_motion_counts_on_smaller_frame(self):
+        # Same 5px/frame motion on 240p: threshold = 0.01 * 240 = 2.4 → counts.
+        c = KickupCounter(min_velocity=0.5, min_velocity_pct=0.01)
+        for y in range(100, 200, 5):
+            c.update(y=float(y), frame_height=240)
+        for y in range(200, 100, -5):
+            c.update(y=float(y), frame_height=240)
+        assert c.count == 1
+
+    def test_frame_height_none_keeps_literal_threshold(self):
+        # frame_height=None → use min_velocity literal as before.
+        c = KickupCounter(min_velocity=1.0, min_velocity_pct=0.01)
+        for y in range(100, 200, 5):
+            c.update(y=float(y))  # no frame_height
+        for y in range(200, 100, -5):
+            c.update(y=float(y))
+        assert c.count == 1
+
+
+class TestKickupBodyPartCredit:
+    def _trigger_one_kickup(self, c: KickupCounter) -> None:
+        for y in range(100, 500, 10):
+            c.update(y=float(y))
+        for y in range(500, 100, -10):
+            c.update(y=float(y))
+            if c.just_kicked:
+                return
+
+    def test_starts_with_empty_per_part_counts(self):
+        from soccer_ball.pose import BodyPart
+        c = KickupCounter()
+        assert c.counts_by_part == {BodyPart.FOOT: 0, BodyPart.KNEE: 0, BodyPart.HEAD: 0}
+        assert c.last_part is None
+
+    def test_credit_increments_per_part(self):
+        from soccer_ball.pose import BodyPart
+        c = KickupCounter()
+        self._trigger_one_kickup(c)
+        c.credit_last(BodyPart.FOOT)
+        assert c.counts_by_part[BodyPart.FOOT] == 1
+        assert c.counts_by_part[BodyPart.KNEE] == 0
+        assert c.last_part == BodyPart.FOOT
+        # Aggregate count untouched by credit.
+        assert c.count == 1
+
+    def test_credit_none_rejects_the_bounce(self):
+        c = KickupCounter()
+        self._trigger_one_kickup(c)
+        assert c.count == 1
+        c.credit_last(None)
+        # Aggregate count and just_kicked are rolled back.
+        assert c.count == 0
+        assert c.just_kicked is False
+        assert c.last_part is None
+
+    def test_credit_resets_with_full_reset(self):
+        from soccer_ball.pose import BodyPart
+        c = KickupCounter()
+        self._trigger_one_kickup(c)
+        c.credit_last(BodyPart.KNEE)
+        c.reset()
+        assert c.counts_by_part == {BodyPart.FOOT: 0, BodyPart.KNEE: 0, BodyPart.HEAD: 0}
+        assert c.last_part is None
+
+
 class TestMotionTrail:
     def test_starts_empty(self):
         t = MotionTrail(max_len=10)

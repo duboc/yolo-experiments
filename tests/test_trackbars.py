@@ -58,6 +58,8 @@ class TestEncodeSettings:
         assert out["show_label"] == 1
         assert out["show_settings"] == 1
         assert out["min_area_pct"] == 10  # 1.0% × 10
+        assert out["proximity_px"] == 80
+        assert out["show_pose"] == 1
 
 
 class TestRoundTrip:
@@ -66,6 +68,7 @@ class TestRoundTrip:
             conf=0.4, iou=0.55, max_det=150, imgsz=960,
             ball_class=0, agnostic_nms=True, show_fps=False, show_label=False,
             show_settings=False, min_area_pct=2.5,
+            proximity_px=120, show_pose=False,
         )
         restored = decode_trackbars(encode_settings(original))
         assert restored == original
