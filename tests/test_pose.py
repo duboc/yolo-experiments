@@ -6,6 +6,7 @@ import pytest
 from soccer_ball.pose import (
     KEYPOINT_GROUPS,
     BodyPart,
+    decide_bounce_credit,
     extract_body_keypoints,
     nearest_body_part,
 )
@@ -98,3 +99,41 @@ class TestKeypointGroups:
         assert KEYPOINT_GROUPS[BodyPart.FOOT] == (15, 16)
         assert KEYPOINT_GROUPS[BodyPart.KNEE] == (13, 14)
         assert KEYPOINT_GROUPS[BodyPart.HEAD] == (0,)
+
+
+class TestDecideBounceCredit:
+    """The soft pose-gate logic: don't penalize bounces when pose finds nothing."""
+
+    def test_empty_parts_returns_fallback(self):
+        empty = {BodyPart.FOOT: [], BodyPart.KNEE: [], BodyPart.HEAD: []}
+        assert decide_bounce_credit(empty, (100, 100), 80) == BodyPart.FOOT
+
+    def test_empty_parts_honors_custom_fallback(self):
+        empty = {BodyPart.FOOT: [], BodyPart.KNEE: [], BodyPart.HEAD: []}
+        assert decide_bounce_credit(empty, (100, 100), 80, fallback=BodyPart.HEAD) == BodyPart.HEAD
+
+    def test_ball_near_part_returns_that_part(self):
+        parts = {
+            BodyPart.FOOT: [(100, 500)],
+            BodyPart.KNEE: [],
+            BodyPart.HEAD: [],
+        }
+        assert decide_bounce_credit(parts, (110, 510), 80) == BodyPart.FOOT
+
+    def test_ball_far_from_all_returns_none(self):
+        parts = {
+            BodyPart.FOOT: [(100, 500)],
+            BodyPart.KNEE: [(100, 400)],
+            BodyPart.HEAD: [(100, 100)],
+        }
+        # Ball at (1000, 1000) — far from every keypoint with radius 80
+        assert decide_bounce_credit(parts, (1000, 1000), 80) is None
+
+    def test_picks_closest_part(self):
+        parts = {
+            BodyPart.FOOT: [(100, 500)],
+            BodyPart.KNEE: [(100, 400)],
+            BodyPart.HEAD: [(100, 100)],
+        }
+        # Ball closer to knee (100, 400) than to anything else
+        assert decide_bounce_credit(parts, (100, 410), 200) == BodyPart.KNEE

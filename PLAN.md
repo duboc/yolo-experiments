@@ -347,3 +347,33 @@ Skipped this round: `--record path.mp4` (deferred).
 - **Risk: 60fps preset asks for more than camera supports** — `cap.set(CAP_PROP_FPS, 60)` returns the actual rate; we log mismatch.
 - **Risk: drop-rate overlay misleading at startup** — first ~30 frames have small denominator. Skip rendering when `captured < 10`.
 - **Risk: extra CLI flags clutter --help** — 8 new flags, but they're grouped logically. Keep TUI lean (don't prompt for these).
+
+---
+
+# Plan: Fix the kickup counter regression (round 9)
+
+## Context
+
+User reports the kickup counter stopped working after round 7. Root cause: the pose gate is too aggressive. Two failure modes:
+
+1. **Soft case — pose can't see anyone.** `body_parts` is `{FOOT: [], KNEE: [], HEAD: []}` (no person detected). The current code calls `nearest_body_part(centroid, {}, ...)` which returns None, then `credit_last(None)` rolls back the bounce. We're penalizing bounces for the *pose model's* failure to detect a person.
+2. **Hard case — proximity too tight.** Default 80px = ~7% of 1080p height. But pose keypoints are joint centers; the actual foot is 50-100px below the ankle keypoint. Ball center to ankle keypoint can easily exceed 80px on a real kickup.
+
+Both are correctness bugs in the gate logic, not the pose model itself.
+
+## Design
+
+- **Soft gate:** if pose found *no* body parts at all this frame, credit the bounce anyway (default to FOOT). Only reject when pose actually saw someone but none of their keypoints were close enough to the ball.
+- **Bump default proximity** from 80 to 150 to match real ankle-vs-foot offset.
+- **Diagnostic log** on every bounce decision so the user can tell from the terminal which mode they're in (`kept (foot)`, `kept (no pose)`, `rejected`).
+- **Pose-status line** in the settings overlay: `pose: yolo26n-pose.pt  3 kpts` so the user sees in real time whether pose is finding anyone.
+- Extract the gate decision into a pure `decide_bounce_credit()` in `soccer_ball/pose.py` so it's unit-testable in isolation.
+
+## Checklist
+
+- [x] TDD: `decide_bounce_credit(parts, centroid, proximity_px, fallback)` — empty parts returns fallback; ball near a part returns that part; ball far from all returns None.
+- [x] Implement `decide_bounce_credit` in `soccer_ball/pose.py`.
+- [x] Update `RuntimeSettings.proximity_px` default 80 → 150 (`tests/test_settings.py` + `tests/test_trackbars.py`).
+- [x] `detect.py`: replace the inline `nearest_body_part` call with `decide_bounce_credit`; log each bounce decision; pass total keypoint count into the settings overlay.
+- [x] Update `_settings_lines` to render `pose: <name>  N kpts`.
+- [x] Run pytest, commit, push.

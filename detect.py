@@ -50,8 +50,8 @@ from soccer_ball.kickup import KickupCounter, MotionTrail
 from soccer_ball.devices import auto_device, resolve_half
 from soccer_ball.pose import (
     BodyPart,
+    decide_bounce_credit,
     extract_body_keypoints,
-    nearest_body_part,
 )
 from soccer_ball.tracking import SingleBallTracker
 from soccer_ball.settings import (
@@ -211,6 +211,7 @@ def _settings_lines(
     model,
     counter: KickupCounter,
     pose_model_name: str | None,
+    pose_keypoints_seen: int,
 ) -> list[str]:
     class_name = "?"
     if hasattr(model, "names"):
@@ -221,9 +222,14 @@ def _settings_lines(
         if pose_model_name is not None
         else "pose off"
     )
+    pose_line = (
+        f"pose:     {pose_model_name}  ({pose_keypoints_seen} kpts)"
+        if pose_model_name is not None
+        else "pose:     off"
+    )
     return [
         f"model:    {launch_cfg.model}",
-        f"pose:     {pose_model_name or 'off'}",
+        pose_line,
         f"device:   {device}   half:{'y' if launch_cfg.half else 'n'}",
         f"conf:     {live.conf:.2f}   iou:{live.iou:.2f}",
         f"imgsz:    {live.imgsz}   max_det:{live.max_det}",
@@ -378,13 +384,21 @@ def _run_loop(
                             pose_kp.conf.cpu().numpy() if pose_kp.conf is not None else np.ones(pose_kp.xy.shape[:2]),
                         )
                 if kickup.just_kicked:
-                    if pose_model is not None and centroid is not None:
-                        part = nearest_body_part(centroid, body_parts, live.proximity_px)
-                        kickup.credit_last(part)
-                    elif pose_model is None and centroid is not None:
-                        # Pose disabled: Stage 1 only — credit the count to "foot"
-                        # by convention so per-part totals still add up to count.
+                    if pose_model is None or centroid is None:
+                        # Stage 1 only: credit FOOT by convention so per-part
+                        # totals still add up to the aggregate count.
                         kickup.credit_last(BodyPart.FOOT)
+                        log.info("kickup #%d: kept (no pose)", kickup.count)
+                    else:
+                        part = decide_bounce_credit(body_parts, centroid, live.proximity_px)
+                        kickup.credit_last(part)
+                        if part is None:
+                            log.info(
+                                "kickup rejected: no body part within %dpx of ball at %s",
+                                live.proximity_px, centroid,
+                            )
+                        else:
+                            log.info("kickup #%d: kept (%s)", kickup.count, part.value)
 
                 annotated = overlay_trail(annotated, list(trail))
                 if pose_model is not None and live.show_pose:
@@ -399,10 +413,11 @@ def _run_loop(
                     drop = grabber.stats.drop_rate if grabber.stats.captured >= 10 else None
                     annotated = overlay_fps(annotated, fps.value, cam_fps=cam_fps, drop_rate=drop)
                 if live.show_settings:
+                    pose_kp_count = sum(len(pts) for pts in body_parts.values())
                     annotated = overlay_settings(
                         annotated,
                         _settings_lines(
-                            launch_cfg, live, device, model, kickup, pose_model_name
+                            launch_cfg, live, device, model, kickup, pose_model_name, pose_kp_count
                         ),
                     )
 

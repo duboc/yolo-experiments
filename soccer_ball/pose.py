@@ -72,3 +72,22 @@ def nearest_body_part(
     if best_part is None or best_dist > max_distance_px:
         return None
     return best_part
+
+
+def decide_bounce_credit(
+    parts: dict[BodyPart, list[tuple[int, int]]],
+    centroid: tuple[int, int],
+    proximity_px: float,
+    fallback: BodyPart = BodyPart.FOOT,
+) -> BodyPart | None:
+    """Soft pose-gate: decide which body part (if any) gets credit for a bounce.
+
+    - If pose detected NO body parts at all this frame, credit ``fallback``
+      anyway. Pose-model failure shouldn't penalize a real bounce.
+    - If pose detected someone, return the nearest part within proximity.
+    - Otherwise (someone visible but too far from the ball), return None
+      so the caller can reject the bounce.
+    """
+    if not any(pts for pts in parts.values()):
+        return fallback
+    return nearest_body_part(centroid, parts, proximity_px)

@@ -58,7 +58,7 @@ class TestEncodeSettings:
         assert out["show_label"] == 1
         assert out["show_settings"] == 1
         assert out["min_area_pct"] == 10  # 1.0% × 10
-        assert out["proximity_px"] == 80
+        assert out["proximity_px"] == 150
         assert out["show_pose"] == 1
 
 
