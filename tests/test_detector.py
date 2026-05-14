@@ -7,7 +7,7 @@ any model weights — they only exercise NumPy/OpenCV transformations.
 import numpy as np
 import pytest
 
-from soccer_ball.detector import annotate_frame, filter_sports_ball, format_label
+from soccer_ball.detector import annotate_frame, filter_sports_ball, format_label, overlay_fps
 
 
 class TestFilterSportsBall:
@@ -123,3 +123,25 @@ class TestAnnotateFrame:
 
         np.testing.assert_array_equal(out, frame)
         assert out is not frame  # still a copy
+
+
+class TestOverlayFps:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def test_does_not_mutate_input(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_fps(frame, 42.0)
+        np.testing.assert_array_equal(frame, original)
+
+    def test_draws_something(self):
+        frame = self._blank()
+        out = overlay_fps(frame, 42.0)
+        assert not np.array_equal(out, frame)
+        assert out.shape == frame.shape and out.dtype == frame.dtype
+
+    def test_zero_fps_still_renders(self):
+        frame = self._blank()
+        out = overlay_fps(frame, 0.0)
+        assert not np.array_equal(out, frame)

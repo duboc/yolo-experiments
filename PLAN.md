@@ -49,3 +49,62 @@ Splitting helpers into `soccer_ball/detector.py` keeps `detect.py` thin and lets
 - **Performance**: `model.predict` is called per-frame; no batching needed for webcam. `verbose=False` to avoid stdout spam.
 - **Correctness**: COCO class 32 verified at runtime by reading `model.names`. Webcam release happens in `finally`.
 - **Style**: Functions under 50 lines. Pure helpers separated from I/O loop. No `print` in library code — use `logging` if anything needs to surface.
+
+---
+
+# Plan: Real-time enhancements (round 2)
+
+## Context
+
+User asked for: large model default, M4 GPU acceleration (Apple MPS), improved frame capture pipeline, and an interactive camera picker before the loop starts.
+
+## Design decisions
+
+- **Default model**: `yolo26l.pt` (the "L" / large tier). `--model yolo26x.pt` for extra-large.
+- **Device selection**: `--device auto` resolves to `mps` if available (M-series Macs), else `cuda` if available, else `cpu`. `--device {auto,mps,cuda,cpu}` override. We propagate errors instead of silent fallback so the user knows when MPS isn't kicking in.
+- **Frame capture**: A `ThreadedGrabber` runs `cap.read()` in a background daemon thread and atomically stores the latest frame. Main loop pulls from `grabber.read()` and never blocks waiting on the camera. On macOS the AVFoundation backend ignores `CAP_PROP_BUFFERSIZE`, which is exactly why a threaded grabber matters there. We also set MJPG fourcc to push the camera off its default low-FPS YUYV mode.
+- **FPS overlay**: A small EMA over recent frame deltas, rendered top-left.
+- **Camera picker**: Probe indices 0-N (default N=5), open each briefly, record resolution and FPS, present a numbered list, read choice via `input()`. Skipped if `--source` was supplied or if stdin is not a TTY (so headless runs still work).
+- **Testability**: All non-I/O logic lives in pure helpers with injected dependencies. The `ThreadedGrabber` accepts any object exposing `read()`/`release()`, so tests use a fake capture. The picker takes the camera list and an `input_fn` for the prompt.
+
+## Architecture additions
+
+```
+soccer_ball/
+├── devices.py     # auto_device(), with optional torch_module injection for tests
+├── cameras.py     # CameraInfo, probe_cameras(), pick_camera_interactive()
+└── capture.py     # ThreadedGrabber (context manager), FpsMeter
+```
+
+`detect.py` keeps its role as the I/O glue: parse args → pick device → pick camera → open grabber → loop.
+
+## Checklist
+
+- [x] In `tests/test_devices.py`, write failing tests for `auto_device(torch_module)` covering: mps available → "mps"; cuda available, mps not → "cuda"; neither → "cpu". Use a `SimpleNamespace` fake torch.
+- [x] In `soccer_ball/devices.py`, implement `auto_device(torch_module=None)` that imports torch lazily when the arg is None. Make tests pass.
+- [x] In `tests/test_cameras.py`, write failing tests for `pick_camera_interactive(cameras, input_fn)`: returns the chosen index for a valid number, re-prompts on invalid input, raises `KeyboardInterrupt` cleanly on EOF. Also test that `format_camera_menu(cameras)` renders the expected lines.
+- [x] In `soccer_ball/cameras.py`, implement `CameraInfo`, `format_camera_menu`, `pick_camera_interactive`. Implement `probe_cameras(max_index, capture_factory)` with an injectable factory so tests don't open real cameras. Make tests pass.
+- [x] In `tests/test_capture.py`, write failing tests for `ThreadedGrabber` using a fake capture: `read()` returns the latest frame produced by the fake; `stop()` joins the thread; using as a context manager auto-releases. Also test `FpsMeter.tick()` returns a sensible EMA after several ticks.
+- [x] In `soccer_ball/capture.py`, implement `ThreadedGrabber` (daemon thread, threading.Lock, `started`/`stopped` events) and `FpsMeter`. Make tests pass.
+- [x] Update `detect.py`:
+  - Change `--model` default to `yolo26l.pt`.
+  - Add `--device {auto,mps,cuda,cpu}` (default `auto`).
+  - Add `--probe-max` (default `5`) for picker breadth.
+  - Add `--width`, `--height` (optional camera resolution hints).
+  - When `--source` is omitted, run the camera picker (only if stdin is a TTY).
+  - Use `ThreadedGrabber` instead of direct `cap.read()`.
+  - Pass `device=` to `model.predict()`.
+  - Overlay FPS via `FpsMeter` on each annotated frame.
+- [x] Add `_overlay_fps(frame, fps)` helper in `soccer_ball/detector.py` with a test (immutability, draws something).
+- [x] Update `README.md`: new defaults, `--device`, picker UX, FPS overlay, M-series MPS note, threaded-grabber rationale.
+- [x] Run `pytest -q` — all old tests still pass, new tests added.
+- [x] Commit in coherent chunks.
+
+## Critique pass
+
+- **Risk: macOS-only camera picker on Linux test box**: I can't actually open a camera here. Mitigated by injectable `capture_factory` so tests use a fake.
+- **Risk: MPS not available in CI / Linux**: `auto_device` fake-tested via injected torch module. Real device confirmed manually on the user's Mac.
+- **Risk: ThreadedGrabber thread leak**: Always cleanup via context manager; tests assert thread is non-alive after `stop()`.
+- **Risk: MJPG fourcc not supported by some cameras**: Wrap the `set` calls in try/log; OpenCV `set` returns False on failure but doesn't raise.
+- **Risk: --source 0 vs picker ambiguity**: Picker only runs when `--source` was *not* passed. `argparse` default sentinel (`None`) distinguishes "user typed 0" from "user typed nothing".
+- **Risk: FPS overlay covers detections at top-left**: Acceptable; small font, fixed position, user can disable via `--no-fps`.
