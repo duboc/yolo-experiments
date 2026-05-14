@@ -34,7 +34,7 @@ from soccer_ball.detector import (
     overlay_fps,
     overlay_settings,
 )
-from soccer_ball.devices import auto_device
+from soccer_ball.devices import auto_device, resolve_half
 from soccer_ball.settings import (
     DEFAULT_PRESETS_DIR,
     LaunchConfig,
@@ -73,7 +73,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Inference device. Default: auto (mps > cuda > cpu).")
     p.add_argument("--width", type=int, default=None, help="Camera width hint.")
     p.add_argument("--height", type=int, default=None, help="Camera height hint.")
-    p.add_argument("--half", action="store_true", default=None, help="Use FP16 half-precision.")
+    p.add_argument("--half", action=argparse.BooleanOptionalAction, default=None,
+                   help="Use FP16 half-precision. Default: True on mps/cuda, forced False on cpu. Pass --no-half to disable.")
     p.add_argument("--preset", default="default", help="Preset name to load and save. Default: default.")
 
     # Runtime settings
@@ -92,7 +93,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--no-display", action="store_true", help="Skip cv2.imshow (headless).")
     p.add_argument("--no-fps", action="store_true", help="Disable the FPS overlay at startup.")
     p.add_argument("--list-cameras", action="store_true", help="Probe cameras, print, exit.")
-    p.add_argument("--probe-max", type=int, default=5, help="Max camera index to probe.")
+    p.add_argument("--probe-max", type=int, default=3, help="Max camera index to probe. Default 3 keeps macOS quiet; raise to 5+ if you have more cameras.")
 
     return p.parse_args(argv)
 
@@ -277,6 +278,11 @@ def main(argv: list[str] | None = None) -> int:
             runtime = _build_runtime_settings(args, launch_cfg.preset)
 
     device = auto_device() if launch_cfg.device == "auto" else launch_cfg.device
+    resolved_half = resolve_half(launch_cfg.half, device)
+    if resolved_half != launch_cfg.half:
+        log.info("Forcing half=False on device=%s (FP16 is unsupported / slower on CPU).", device)
+        launch_cfg = replace(launch_cfg, half=resolved_half)
+
     source = _resolve_source(launch_cfg, args.probe_max)
     return _run_loop(launch_cfg, runtime, args, device, source)
 

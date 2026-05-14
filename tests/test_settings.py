@@ -23,7 +23,7 @@ class TestLaunchConfigDefaults:
         assert cfg.source is None
         assert cfg.width is None
         assert cfg.height is None
-        assert cfg.half is False
+        assert cfg.half is True  # M-series friendly default; CPU users get auto-override
         assert cfg.preset == "default"
 
 

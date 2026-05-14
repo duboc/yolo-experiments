@@ -214,3 +214,31 @@ User wants to see which settings the detector is actually using, rendered on the
 - **Risk: overlay covers detections in top-right** — accept; user can disable via the trackbar.
 - **Risk: text wrap on small frames** — choose a small font (0.5 scale) and short labels; for very narrow frames the background may overflow but cv2 will just clip. Acceptable for a dev tool.
 - **Risk: model.names lookup throws if unfamiliar class id** — use `.get(id, "?")` style guard, already done in detect.py for ball_class logging.
+
+---
+
+# Plan: M4 Pro defaults (round 5)
+
+## Context
+
+User has a MacBook Pro M4 Pro (10P + 4E cores, 16-core Apple GPU, 48 GB unified memory). MPS is the right device. FP16 half-precision gives a meaningful speedup on MPS/CUDA but is unstable/slow on CPU. Probe noise on macOS comes from probing camera indices that don't exist.
+
+## Checklist
+
+- [x] In `tests/test_devices.py`, add failing tests for `resolve_half(True, "mps") == True`, `(True, "cuda") == True`, `(True, "cpu") == False`, `(False, "mps") == False`.
+- [x] In `soccer_ball/devices.py`, implement `resolve_half(requested, device)`. Make tests pass.
+- [x] In `tests/test_settings.py`, update the `LaunchConfig.half` default expectation to `True`.
+- [x] In `soccer_ball/settings.py`, change `LaunchConfig.half` default to `True`.
+- [x] In `detect.py`:
+  - Switch `--half` to `argparse.BooleanOptionalAction` so users can pass `--no-half` to opt out.
+  - After resolving device, call `resolve_half`; if it overrode `True → False` on CPU, log a warning.
+  - Lower `--probe-max` default from 5 to 3 to quiet the macOS index-out-of-bounds noise.
+- [x] Update `README.md`: a "Device guide" section with M-series guidance and the `--no-half` flag.
+- [x] Run `pytest -q`. Commit + push.
+
+## Critique
+
+- **Risk: changing dataclass default to `half=True` breaks CPU users silently** — mitigated by `resolve_half`, which forces False on CPU and logs the override.
+- **Risk: `BooleanOptionalAction` is Python 3.9+** — README already requires 3.10+, so this is safe.
+- **Risk: lowering probe-max from 5 to 3 hides cameras 3-4 from auto-probe** — accept; users with more cameras pass `--probe-max 5` (documented).
+- **Risk: half=True on MPS may break for some YOLO export paths** — only affects predict, which Ultralytics handles cleanly.

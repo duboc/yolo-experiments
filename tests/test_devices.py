@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from soccer_ball.devices import auto_device
+from soccer_ball.devices import auto_device, resolve_half
 
 
 def _fake_torch(*, mps_available: bool, cuda_available: bool) -> SimpleNamespace:
@@ -42,3 +42,20 @@ def test_handles_missing_mps_backend():
         cuda=SimpleNamespace(is_available=lambda: True),
     )
     assert auto_device(torch) == "cuda"
+
+
+class TestResolveHalf:
+    def test_keeps_true_on_mps(self):
+        assert resolve_half(True, "mps") is True
+
+    def test_keeps_true_on_cuda(self):
+        assert resolve_half(True, "cuda") is True
+
+    def test_forces_false_on_cpu(self):
+        assert resolve_half(True, "cpu") is False
+
+    def test_keeps_false_on_mps(self):
+        assert resolve_half(False, "mps") is False
+
+    def test_keeps_false_on_cpu(self):
+        assert resolve_half(False, "cpu") is False

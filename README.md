@@ -151,6 +151,22 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--list-cameras`  | Probe cameras, print, exit                       |
 | `--probe-max N`   | Max camera index to probe (default 5)            |
 
+## Device guide
+
+| Hardware                  | `--device` | `--half` |
+| ------------------------- | ---------- | -------- |
+| Apple Silicon (M1-M4)     | `mps`      | `True` (default) |
+| NVIDIA GPU (any modern)   | `cuda`     | `True` (default) |
+| CPU only                  | `cpu`      | forced to `False` |
+
+`--device auto` (the default) resolves to MPS on Apple Silicon, CUDA on
+NVIDIA boxes, CPU as fallback. CUDA is **NVIDIA-only**; on a Mac, asking
+for `cuda` will fail.
+
+`--half` defaults to `True`. On CPU it's automatically forced off (PyTorch
+CPU FP16 inference is unsupported / much slower). Pass `--no-half` to opt
+out on a GPU device for a small accuracy bump.
+
 ## Why a threaded frame grabber?
 
 OpenCV's `CAP_PROP_BUFFERSIZE = 1` is silently ignored by the macOS

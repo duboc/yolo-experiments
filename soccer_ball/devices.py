@@ -21,3 +21,10 @@ def auto_device(torch_module: Any | None = None) -> str:
     if torch_module.cuda.is_available():
         return "cuda"
     return "cpu"
+
+
+def resolve_half(requested: bool, device: str) -> bool:
+    """Force FP16 off on CPU; PyTorch CPU FP16 is unsupported or markedly slower."""
+    if device == "cpu":
+        return False
+    return requested

@@ -22,7 +22,7 @@ class LaunchConfig:
     source: str | None = None
     width: int | None = None
     height: int | None = None
-    half: bool = False
+    half: bool = True  # MPS/CUDA-friendly default; resolved to False on CPU at runtime
     preset: str = "default"
 
 
