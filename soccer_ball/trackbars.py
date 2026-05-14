@@ -13,7 +13,7 @@ import cv2
 from soccer_ball.settings import RuntimeSettings
 
 # Trackbar names (also used as ids when reading positions).
-_NAMES = ["conf", "iou", "max_det", "imgsz", "ball_class", "agnostic_nms", "show_fps", "show_label"]
+_NAMES = ["conf", "iou", "max_det", "imgsz", "ball_class", "agnostic_nms", "show_fps", "show_label", "show_settings"]
 
 _IMGSZ_STEP = 32
 _IMGSZ_MIN = 320  # = 10 * 32
@@ -28,6 +28,7 @@ _TRACKBAR_MAX = {
     "agnostic_nms": 1,
     "show_fps": 1,
     "show_label": 1,
+    "show_settings": 1,
 }
 
 
@@ -58,6 +59,7 @@ def encode_settings(s: RuntimeSettings) -> dict[str, int]:
         "agnostic_nms": int(s.agnostic_nms),
         "show_fps": int(s.show_fps),
         "show_label": int(s.show_label),
+        "show_settings": int(s.show_settings),
     }
 
 
@@ -71,6 +73,7 @@ def decode_trackbars(positions: dict[str, int]) -> RuntimeSettings:
         agnostic_nms=decode_bool(positions["agnostic_nms"]),
         show_fps=decode_bool(positions["show_fps"]),
         show_label=decode_bool(positions["show_label"]),
+        show_settings=decode_bool(positions["show_settings"]),
     )
 
 

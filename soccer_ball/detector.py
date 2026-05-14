@@ -90,3 +90,46 @@ def overlay_fps(frame: np.ndarray, fps: float) -> np.ndarray:
     cv2.rectangle(out, (5, 5), (5 + tw + 6, 5 + th + baseline + 4), _FPS_BG, cv2.FILLED)
     cv2.putText(out, text, (8, 5 + th + 2), _FONT, 0.6, _FPS_COLOR, 2, cv2.LINE_AA)
     return out
+
+
+_SETTINGS_FONT_SCALE = 0.5
+_SETTINGS_FONT_THICKNESS = 1
+_SETTINGS_TEXT_COLOR = (255, 255, 255)
+_SETTINGS_LINE_HEIGHT = 18
+_SETTINGS_PAD = 8
+
+
+def overlay_settings(frame: np.ndarray, lines: list[str]) -> np.ndarray:
+    """Render ``lines`` in a semi-transparent panel anchored to the top-right corner."""
+    out = frame.copy()
+    if not lines:
+        return out
+
+    sizes = [cv2.getTextSize(line, _FONT, _SETTINGS_FONT_SCALE, _SETTINGS_FONT_THICKNESS) for line in lines]
+    max_w = max(w for (w, _h), _b in sizes)
+    block_w = max_w + 2 * _SETTINGS_PAD
+    block_h = _SETTINGS_LINE_HEIGHT * len(lines) + _SETTINGS_PAD
+
+    h, w = out.shape[:2]
+    x2 = w - 5
+    x1 = max(0, x2 - block_w)
+    y1 = 5
+    y2 = min(h - 1, y1 + block_h)
+
+    bg = out.copy()
+    cv2.rectangle(bg, (x1, y1), (x2, y2), (0, 0, 0), cv2.FILLED)
+    cv2.addWeighted(bg, 0.6, out, 0.4, 0, out)
+
+    for i, line in enumerate(lines):
+        baseline_y = y1 + _SETTINGS_PAD + _SETTINGS_LINE_HEIGHT * i + 12
+        cv2.putText(
+            out,
+            line,
+            (x1 + _SETTINGS_PAD, baseline_y),
+            _FONT,
+            _SETTINGS_FONT_SCALE,
+            _SETTINGS_TEXT_COLOR,
+            _SETTINGS_FONT_THICKNESS,
+            cv2.LINE_AA,
+        )
+    return out

@@ -32,6 +32,7 @@ from soccer_ball.detector import (
     annotate_frame,
     filter_sports_ball,
     overlay_fps,
+    overlay_settings,
 )
 from soccer_ball.devices import auto_device
 from soccer_ball.settings import (
@@ -141,6 +142,20 @@ def _open_capture(source: int | str, width: int | None, height: int | None) -> c
     return cap
 
 
+def _settings_lines(launch_cfg: LaunchConfig, live: RuntimeSettings, device: str, model) -> list[str]:
+    class_name = "?"
+    if hasattr(model, "names"):
+        class_name = model.names.get(live.ball_class, "?") if isinstance(model.names, dict) else "?"
+    return [
+        f"model:    {launch_cfg.model}",
+        f"device:   {device}   half:{'y' if launch_cfg.half else 'n'}",
+        f"conf:     {live.conf:.2f}   iou:{live.iou:.2f}",
+        f"imgsz:    {live.imgsz}   max_det:{live.max_det}",
+        f"agnostic: {'y' if live.agnostic_nms else 'n'}",
+        f"class:    {live.ball_class} {class_name}",
+    ]
+
+
 def _try_create_panel(initial: RuntimeSettings, enabled: bool) -> TrackbarPanel | None:
     if not enabled:
         return None
@@ -221,6 +236,8 @@ def _run_loop(
                 fps.tick()
                 if live.show_fps:
                     annotated = overlay_fps(annotated, fps.value)
+                if live.show_settings:
+                    annotated = overlay_settings(annotated, _settings_lines(launch_cfg, live, device, model))
 
                 if args.no_display:
                     continue

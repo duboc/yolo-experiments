@@ -49,6 +49,7 @@ class TestEncodeSettings:
         assert out["agnostic_nms"] == 0
         assert out["show_fps"] == 1
         assert out["show_label"] == 1
+        assert out["show_settings"] == 1
 
 
 class TestRoundTrip:
@@ -56,6 +57,7 @@ class TestRoundTrip:
         original = RuntimeSettings(
             conf=0.4, iou=0.55, max_det=150, imgsz=960,
             ball_class=0, agnostic_nms=True, show_fps=False, show_label=False,
+            show_settings=False,
         )
         restored = decode_trackbars(encode_settings(original))
         assert restored == original

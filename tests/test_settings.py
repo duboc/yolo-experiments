@@ -38,6 +38,7 @@ class TestRuntimeSettingsDefaults:
         assert s.agnostic_nms is False
         assert s.show_fps is True
         assert s.show_label is True
+        assert s.show_settings is True
 
 
 class TestRuntimeSettingsRoundTrip:

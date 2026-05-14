@@ -36,6 +36,7 @@ class RuntimeSettings:
     agnostic_nms: bool = False
     show_fps: bool = True
     show_label: bool = True
+    show_settings: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

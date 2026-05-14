@@ -7,7 +7,13 @@ any model weights — they only exercise NumPy/OpenCV transformations.
 import numpy as np
 import pytest
 
-from soccer_ball.detector import annotate_frame, filter_sports_ball, format_label, overlay_fps
+from soccer_ball.detector import (
+    annotate_frame,
+    filter_sports_ball,
+    format_label,
+    overlay_fps,
+    overlay_settings,
+)
 
 
 class TestFilterSportsBall:
@@ -158,3 +164,35 @@ class TestOverlayFps:
         frame = self._blank()
         out = overlay_fps(frame, 0.0)
         assert not np.array_equal(out, frame)
+
+
+class TestOverlaySettings:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def test_does_not_mutate_input(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_settings(frame, ["model: yolo26l.pt", "device: mps"])
+        np.testing.assert_array_equal(frame, original)
+
+    def test_draws_lines(self):
+        frame = self._blank()
+        out = overlay_settings(frame, ["conf: 0.25", "iou: 0.70"])
+        assert out.shape == frame.shape and out.dtype == frame.dtype
+        assert not np.array_equal(out, frame)
+
+    def test_empty_lines_returns_unchanged_copy(self):
+        frame = self._blank()
+        out = overlay_settings(frame, [])
+        np.testing.assert_array_equal(out, frame)
+        assert out is not frame
+
+    def test_renders_in_top_right_quadrant(self):
+        frame = self._blank()
+        out = overlay_settings(frame, ["x"])
+        # Top-left quadrant must be untouched (FPS overlay's territory).
+        np.testing.assert_array_equal(
+            out[: frame.shape[0] // 2, : frame.shape[1] // 2],
+            frame[: frame.shape[0] // 2, : frame.shape[1] // 2],
+        )

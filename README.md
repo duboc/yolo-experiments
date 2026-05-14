@@ -69,8 +69,26 @@ Then the camera picker, then the live window plus a `Settings` window with track
 | `agnostic_nms` | 0/1                               | Class-agnostic NMS                 |
 | `show_fps`     | 0/1                               | FPS overlay on/off                 |
 | `show_label`   | 0/1                               | Box labels on/off                  |
+| `show_settings`| 0/1                               | Settings overlay (top-right) on/off |
 
 Drag a slider, see the effect immediately on the next frame.
+
+## On-screen settings overlay
+
+While the loop is running, the top-right corner shows a live readout of the
+settings actually being used for inference, e.g.:
+
+```
+model:    yolo26l.pt
+device:   mps   half:n
+conf:     0.25  iou:0.70
+imgsz:    640   max_det:300
+agnostic: n
+class:    32 sports ball
+```
+
+This stays in sync with the trackbars and presets. Toggle off with the
+`show_settings` trackbar if it gets in the way.
 
 ## Presets
 

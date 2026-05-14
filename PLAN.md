@@ -188,3 +188,29 @@ soccer_ball/
 - **Risk: precedence order is confusing** — README spells it out, and TUI prompts show the resolved default in brackets so the user always sees the effective value before confirming.
 - **Risk: preset file accidentally checked in** — `.gitignore`s `presets/*.json` (keep `.gitkeep`).
 - **Risk: legacy --conf and --ball-class flags** — keep them as the canonical CLI surface, route them through the same overlay machinery as the new flags. No breaking change.
+
+---
+
+# Plan: On-screen settings overlay (round 4)
+
+## Context
+
+User wants to see which settings the detector is actually using, rendered on the frame itself. Adds a top-right semi-transparent panel listing model/device/conf/iou/imgsz/max_det/agnostic_nms/class. Toggleable, on by default for visibility, consistent with the existing `show_fps` / `show_label` toggles.
+
+## Checklist
+
+- [x] In `tests/test_settings.py`, add a failing test that `RuntimeSettings.show_settings` defaults to True.
+- [x] In `soccer_ball/settings.py`, add `show_settings: bool = True` to `RuntimeSettings`. Make tests pass; existing round-trip and merge tests must still pass.
+- [x] In `tests/test_trackbars.py`, add a failing test that `encode_settings` includes `show_settings: 1` for defaults and that `decode_trackbars` round-trips the new field.
+- [x] In `soccer_ball/trackbars.py`, add `show_settings` to `_NAMES`, `_TRACKBAR_MAX`, `encode_settings`, `decode_trackbars`. Make tests pass.
+- [x] In `tests/test_detector.py`, add failing tests for `overlay_settings(frame, lines)`: returns a new array, leaves input unchanged, draws something for non-empty lines, returns unchanged copy for empty list, preserves shape/dtype.
+- [x] In `soccer_ball/detector.py`, implement `overlay_settings` rendering top-right with a semi-transparent black background and white text. Handles right-edge clipping cleanly. Make tests pass.
+- [x] In `detect.py`, build a `_settings_lines(launch_cfg, live, model)` helper that returns the list of strings shown in the overlay. Call `overlay_settings` after `overlay_fps` when `live.show_settings`.
+- [x] Update `README.md` trackbar table and add a screenshot-style block describing the overlay.
+- [x] Run `pytest -q` — all green.
+
+## Critique
+
+- **Risk: overlay covers detections in top-right** — accept; user can disable via the trackbar.
+- **Risk: text wrap on small frames** — choose a small font (0.5 scale) and short labels; for very narrow frames the background may overflow but cv2 will just clip. Acceptable for a dev tool.
+- **Risk: model.names lookup throws if unfamiliar class id** — use `.get(id, "?")` style guard, already done in detect.py for ball_class logging.
