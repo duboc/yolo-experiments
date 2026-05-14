@@ -70,6 +70,7 @@ Then the camera picker, then the live window plus a `Settings` window with track
 | `show_fps`     | 0/1                               | FPS overlay on/off                 |
 | `show_label`   | 0/1                               | Box labels on/off                  |
 | `show_settings`| 0/1                               | Settings overlay (top-right) on/off |
+| `min_area_pct` | 0–100 → 0.0–10.0%                 | Drop boxes below this % of frame area (kickup focus) |
 
 Drag a slider, see the effect immediately on the next frame.
 
@@ -101,12 +102,38 @@ python detect.py --preset indoor      # load presets/indoor.json on startup
 # adjust trackbars while running, press 's' to overwrite presets/indoor.json
 ```
 
+## Kickup mode
+
+The detector is wired for soccer ball juggling out of the box:
+
+- **Tracker** — uses Ultralytics' `model.track()` with ByteTrack so brief
+  motion-blur drops don't lose the ball mid-bounce.
+- **Larger-ball focus** — `min_area_pct` drops detections smaller than 1% of
+  the frame area by default, so distant balls in the background don't
+  distract the counter. Drag the slider to tune.
+- **Bounce counter** — center-top "KICKUPS: N" overlay. Increments each time
+  the ball's smoothed vertical velocity flips from falling to rising. Flashes
+  green for one frame on each new kick.
+- **Motion trail** — last 30 ball centroids drawn as fading orange dots so
+  you can see the kickup arc.
+- **Auto-reset** — counter zeroes itself after ~30 frames with no detection
+  (~1s at 30 FPS), so dropping the ball starts a fresh count.
+
+Tips for accuracy:
+
+- Keep the ball as the largest object in the frame (close-up shots help).
+- For a fast kickup loop, `--imgsz 480` cuts inference time and is plenty
+  for a close-up ball.
+- If micro-jitter on the floor inflates the count, raise `min_area_pct` to
+  drop tiny far-away balls.
+
 ## Keys
 
 | Key | Action                          |
 | --- | ------------------------------- |
 | `q` | Quit                            |
 | `s` | Save current settings as preset |
+| `r` | Reset kickup counter and trail  |
 
 ## Precedence
 
@@ -139,6 +166,7 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--imgsz`         | `640`   | Inference size (multiple of 32)                  |
 | `--ball-class`    | `32`    | COCO class id treated as the ball                |
 | `--agnostic-nms`  | off     | Class-agnostic NMS                               |
+| `--no-half`       | off     | Disable FP16 (default is on for mps/cuda)        |
 
 ### Workflow toggles
 

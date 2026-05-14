@@ -37,6 +37,7 @@ class RuntimeSettings:
     show_fps: bool = True
     show_label: bool = True
     show_settings: bool = True
+    min_area_pct: float = 1.0  # Drop boxes smaller than this % of frame area
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

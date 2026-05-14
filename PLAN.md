@@ -242,3 +242,64 @@ User has a MacBook Pro M4 Pro (10P + 4E cores, 16-core Apple GPU, 48 GB unified 
 - **Risk: `BooleanOptionalAction` is Python 3.9+** — README already requires 3.10+, so this is safe.
 - **Risk: lowering probe-max from 5 to 3 hides cameras 3-4 from auto-probe** — accept; users with more cameras pass `--probe-max 5` (documented).
 - **Risk: half=True on MPS may break for some YOLO export paths** — only affects predict, which Ultralytics handles cleanly.
+
+---
+
+# Plan: Kickup detector (round 6)
+
+## Context
+
+User wants the detector tuned for soccer kickups (juggling): close-up balls, fast vertical motion, motion blur, real-time count. Three pillars: focus on the larger (closer) ball, persist tracking through brief blur, and recognise vertical bounces.
+
+## Design
+
+- **Tracking**: switch from `model.predict()` to `model.track(persist=True, tracker="bytetrack.yaml")`. ByteTrack (Ultralytics' default) handles brief detection drops by carrying IDs forward, which is exactly what motion blur needs.
+- **Larger-ball focus**: new `min_area_pct` runtime setting + trackbar (range 0–10%, default 1%). Detections whose box area is smaller than `min_area_pct * frame_area` are dropped before the kickup logic looks at them.
+- **Kickup detection**: a `KickupCounter` watches the centroid y of the largest passing detection. EMA-smoothed vertical velocity; a sign change from positive (falling) to negative (rising) increments the count. Auto-reset after N frames with no detection.
+- **Visualisation**: motion trail (last N centroids, fading) + a center-top "KICKUPS: N" overlay that flashes briefly on each new kick.
+
+## New modules and helpers
+
+```
+soccer_ball/
+├── kickup.py                  # KickupCounter, MotionTrail (pure)
+└── detector.py                # + filter_by_area, overlay_trail, overlay_kickup
+```
+
+## Checklist
+
+- [x] Tests for `RuntimeSettings.min_area_pct` (default 1.0); update encode/decode round-trip.
+- [x] Add `min_area_pct: float = 1.0` to `RuntimeSettings`. Add `min_area_pct` to trackbar names / max / encode / decode (encoding: trackbar 0-100 → /10 = 0.0–10.0%).
+- [x] Tests for `filter_by_area(xyxy, conf, min_area_pct, frame_shape)`: drops below-threshold boxes; keeps above; empty input; zero threshold passes everything.
+- [x] Implement `filter_by_area` in `detector.py`.
+- [x] Tests for `KickupCounter`:
+  - constant y → count 0
+  - down-only or up-only → count 0
+  - one full down→up cycle → count 1
+  - two cycles → count 2
+  - tiny noise (sub-threshold velocity) → count 0
+  - long absence → resets count to 0
+  - `update(None)` (no detection that frame) advances the absence counter
+- [x] Tests for `MotionTrail`: bounded length, returns insertion order, empty initially, `clear()` empties.
+- [x] Implement `KickupCounter` and `MotionTrail` in `soccer_ball/kickup.py`.
+- [x] Tests for `overlay_trail(frame, centroids)`: immutability, empty no-op, draws something for non-empty.
+- [x] Tests for `overlay_kickup(frame, count, just_kicked)`: immutability, draws something, count text appears (assert non-blank), flash color changes when `just_kicked=True`.
+- [x] Implement `overlay_trail` and `overlay_kickup` in `detector.py`.
+- [x] Wire `detect.py`:
+  - Replace `model.predict(...)` with `model.track(persist=True, tracker="bytetrack.yaml", ...)`.
+  - After existing class+conf filter, run `filter_by_area` using `live.min_area_pct` and the frame shape.
+  - Pick the largest remaining box (max area); compute centroid y; feed to `KickupCounter`.
+  - Update `MotionTrail` with the centroid (or `None` to advance absence).
+  - Render `overlay_trail` and `overlay_kickup` (after FPS/settings overlays so the count sits on top).
+  - Add a `r` key binding to reset the kickup counter manually.
+- [x] Update settings overlay to include `min_area:` and `kickups:` lines.
+- [x] README: new "Kickup mode" section explaining the trail, the count logic, and the `r` key.
+- [x] Run pytest — aim for ~85+ green. Commit + push.
+
+## Critique
+
+- **Risk: model.track() returns the same `boxes` shape but adds `.id` — code already only uses `cls/conf/xyxy`, so the swap is mechanical.** Tracker config file is bundled with ultralytics; no extra setup.
+- **Risk: kickup logic over-counts when ball passes near top of frame** — EMA smoothing with `alpha=0.3` and a minimum velocity-change magnitude threshold filters small wiggles.
+- **Risk: largest-box assumption breaks in multi-ball scenes** — accept; this is a kickup detector, single ball is the use case. Document.
+- **Risk: model.track() may be slower than predict** — empirically a few percent overhead. Worth it for blur robustness.
+- **Risk: trail clutter** — fixed length (30 frames), fading alpha; user can disable via `show_label` toggle (no, that's wrong). Add a separate `show_trail` toggle? Skip for now to keep trackbar count manageable; trail is small visual cost.

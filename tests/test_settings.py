@@ -39,6 +39,7 @@ class TestRuntimeSettingsDefaults:
         assert s.show_fps is True
         assert s.show_label is True
         assert s.show_settings is True
+        assert s.min_area_pct == 1.0
 
 
 class TestRuntimeSettingsRoundTrip:

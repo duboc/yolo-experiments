@@ -36,6 +36,13 @@ class TestDecodeIndividualValues:
         assert decode_bool(0) is False
         assert decode_bool(1) is True
 
+    def test_decode_min_area_pct(self):
+        from soccer_ball.trackbars import decode_min_area_pct
+        assert decode_min_area_pct(0) == 0.0
+        assert decode_min_area_pct(10) == 1.0
+        assert decode_min_area_pct(25) == 2.5
+        assert decode_min_area_pct(100) == 10.0
+
 
 class TestEncodeSettings:
     def test_encodes_defaults(self):
@@ -50,6 +57,7 @@ class TestEncodeSettings:
         assert out["show_fps"] == 1
         assert out["show_label"] == 1
         assert out["show_settings"] == 1
+        assert out["min_area_pct"] == 10  # 1.0% × 10
 
 
 class TestRoundTrip:
@@ -57,7 +65,7 @@ class TestRoundTrip:
         original = RuntimeSettings(
             conf=0.4, iou=0.55, max_det=150, imgsz=960,
             ball_class=0, agnostic_nms=True, show_fps=False, show_label=False,
-            show_settings=False,
+            show_settings=False, min_area_pct=2.5,
         )
         restored = decode_trackbars(encode_settings(original))
         assert restored == original

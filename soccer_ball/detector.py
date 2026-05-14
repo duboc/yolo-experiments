@@ -33,6 +33,24 @@ def filter_sports_ball(
     return xyxy[mask], conf[mask]
 
 
+def filter_by_area(
+    xyxy: np.ndarray,
+    conf: np.ndarray,
+    min_area_pct: float,
+    frame_shape: tuple[int, int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Drop boxes whose pixel area is below ``min_area_pct`` of total frame area."""
+    if xyxy.size == 0 or min_area_pct <= 0:
+        return xyxy, conf
+    h, w = frame_shape[:2]
+    min_pixels = (min_area_pct / 100.0) * h * w
+    widths = xyxy[:, 2] - xyxy[:, 0]
+    heights = xyxy[:, 3] - xyxy[:, 1]
+    areas = widths * heights
+    mask = areas >= min_pixels
+    return xyxy[mask], conf[mask]
+
+
 def format_label(conf: float) -> str:
     return f"soccer ball {conf:.2f}"
 
@@ -132,4 +150,48 @@ def overlay_settings(frame: np.ndarray, lines: list[str]) -> np.ndarray:
             _SETTINGS_FONT_THICKNESS,
             cv2.LINE_AA,
         )
+    return out
+
+
+_TRAIL_COLOR = (0, 200, 255)
+
+
+def overlay_trail(frame: np.ndarray, points: list[tuple[int, int]]) -> np.ndarray:
+    """Draw a fading dot trail over ``frame`` from oldest to newest point."""
+    out = frame.copy()
+    if not points:
+        return out
+    n = len(points)
+    for i, (x, y) in enumerate(points):
+        # Older points smaller and dimmer; newest point brightest.
+        fade = (i + 1) / n
+        radius = max(2, int(2 + 4 * fade))
+        color = tuple(int(c * fade) for c in _TRAIL_COLOR)
+        cv2.circle(out, (int(x), int(y)), radius, color, thickness=-1, lineType=cv2.LINE_AA)
+    return out
+
+
+_KICKUP_COLOR = (255, 255, 255)
+_KICKUP_FLASH_COLOR = (0, 255, 0)
+_KICKUP_BG = (0, 0, 0)
+
+
+def overlay_kickup(frame: np.ndarray, count: int, just_kicked: bool) -> np.ndarray:
+    """Render a center-top KICKUPS counter; flashes green on the bounce frame."""
+    out = frame.copy()
+    text = f"KICKUPS: {count}"
+    color = _KICKUP_FLASH_COLOR if just_kicked else _KICKUP_COLOR
+    scale = 1.2 if just_kicked else 1.0
+    thickness = 3
+    (tw, th), baseline = cv2.getTextSize(text, _FONT, scale, thickness)
+
+    h, w = out.shape[:2]
+    x = (w - tw) // 2
+    y = th + 20
+
+    pad = 10
+    bg = out.copy()
+    cv2.rectangle(bg, (x - pad, y - th - pad), (x + tw + pad, y + baseline + pad), _KICKUP_BG, cv2.FILLED)
+    cv2.addWeighted(bg, 0.55, out, 0.45, 0, out)
+    cv2.putText(out, text, (x, y), _FONT, scale, color, thickness, cv2.LINE_AA)
     return out

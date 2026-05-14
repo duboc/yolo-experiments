@@ -30,10 +30,14 @@ from soccer_ball.cameras import (
 from soccer_ball.capture import FpsMeter, ThreadedGrabber
 from soccer_ball.detector import (
     annotate_frame,
+    filter_by_area,
     filter_sports_ball,
     overlay_fps,
+    overlay_kickup,
     overlay_settings,
+    overlay_trail,
 )
+from soccer_ball.kickup import KickupCounter, MotionTrail
 from soccer_ball.devices import auto_device, resolve_half
 from soccer_ball.settings import (
     DEFAULT_PRESETS_DIR,
@@ -143,7 +147,7 @@ def _open_capture(source: int | str, width: int | None, height: int | None) -> c
     return cap
 
 
-def _settings_lines(launch_cfg: LaunchConfig, live: RuntimeSettings, device: str, model) -> list[str]:
+def _settings_lines(launch_cfg: LaunchConfig, live: RuntimeSettings, device: str, model, kickups: int) -> list[str]:
     class_name = "?"
     if hasattr(model, "names"):
         class_name = model.names.get(live.ball_class, "?") if isinstance(model.names, dict) else "?"
@@ -152,8 +156,9 @@ def _settings_lines(launch_cfg: LaunchConfig, live: RuntimeSettings, device: str
         f"device:   {device}   half:{'y' if launch_cfg.half else 'n'}",
         f"conf:     {live.conf:.2f}   iou:{live.iou:.2f}",
         f"imgsz:    {live.imgsz}   max_det:{live.max_det}",
-        f"agnostic: {'y' if live.agnostic_nms else 'n'}",
+        f"min_area: {live.min_area_pct:.1f}%   agn:{'y' if live.agnostic_nms else 'n'}",
         f"class:    {live.ball_class} {class_name}",
+        f"kickups:  {kickups}",
     ]
 
 
@@ -185,9 +190,11 @@ def _run_loop(
         return 1
 
     fps = FpsMeter()
-    main_window = "Soccer Ball Detector (q quit, s save preset)"
+    main_window = "Soccer Ball Detector (q quit, s save preset, r reset kickups)"
     panel = _try_create_panel(settings, enabled=not args.no_trackbars and not args.no_display)
     last_ball_class: int | None = None
+    kickup = KickupCounter()
+    trail = MotionTrail(max_len=30)
 
     try:
         with ThreadedGrabber(cap) as grabber:
@@ -209,8 +216,10 @@ def _run_loop(
                     log.info("ball_class -> %d (%s)", live.ball_class, name)
                     last_ball_class = live.ball_class
 
-                results = model.predict(
+                results = model.track(
                     frame,
+                    persist=True,
+                    tracker="bytetrack.yaml",
                     verbose=False,
                     device=device,
                     conf=live.conf,
@@ -221,6 +230,7 @@ def _run_loop(
                     agnostic_nms=live.agnostic_nms,
                 )
                 boxes = results[0].boxes
+                centroid: tuple[int, int] | None = None
                 if boxes is None or len(boxes) == 0:
                     annotated = frame
                 else:
@@ -232,13 +242,30 @@ def _run_loop(
                         ball_class_id=live.ball_class,
                         conf_threshold=live.conf,
                     )
+                    kept_xyxy, kept_conf = filter_by_area(
+                        kept_xyxy, kept_conf, live.min_area_pct, frame.shape,
+                    )
+                    if kept_xyxy.shape[0] > 0:
+                        # Pick the largest box for the kickup tracker.
+                        widths = kept_xyxy[:, 2] - kept_xyxy[:, 0]
+                        heights = kept_xyxy[:, 3] - kept_xyxy[:, 1]
+                        areas = widths * heights
+                        idx = int(areas.argmax())
+                        x1, y1, x2, y2 = kept_xyxy[idx]
+                        centroid = (int((x1 + x2) / 2), int((y1 + y2) / 2))
                     annotated = annotate_frame(frame, kept_xyxy, kept_conf, show_label=live.show_label)
+
+                kickup.update(y=float(centroid[1]) if centroid else None)
+                trail.append(centroid)
+
+                annotated = overlay_trail(annotated, list(trail))
+                annotated = overlay_kickup(annotated, kickup.count, kickup.just_kicked)
 
                 fps.tick()
                 if live.show_fps:
                     annotated = overlay_fps(annotated, fps.value)
                 if live.show_settings:
-                    annotated = overlay_settings(annotated, _settings_lines(launch_cfg, live, device, model))
+                    annotated = overlay_settings(annotated, _settings_lines(launch_cfg, live, device, model, kickup.count))
 
                 if args.no_display:
                     continue
@@ -249,6 +276,10 @@ def _run_loop(
                 if key == ord("s"):
                     path = save_preset(launch_cfg.preset, live, presets_dir=DEFAULT_PRESETS_DIR)
                     log.info("Saved preset to %s", path)
+                if key == ord("r"):
+                    kickup.reset()
+                    trail.clear()
+                    log.info("Kickup counter reset.")
     except KeyboardInterrupt:
         log.info("Interrupted by user.")
     finally:

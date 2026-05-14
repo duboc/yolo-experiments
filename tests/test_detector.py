@@ -9,10 +9,13 @@ import pytest
 
 from soccer_ball.detector import (
     annotate_frame,
+    filter_by_area,
     filter_sports_ball,
     format_label,
     overlay_fps,
+    overlay_kickup,
     overlay_settings,
+    overlay_trail,
 )
 
 
@@ -196,3 +199,97 @@ class TestOverlaySettings:
             out[: frame.shape[0] // 2, : frame.shape[1] // 2],
             frame[: frame.shape[0] // 2, : frame.shape[1] // 2],
         )
+
+
+class TestFilterByArea:
+    # 1080p frame for predictable percentages.
+    _FRAME_SHAPE = (1080, 1920, 3)
+    _FRAME_AREA = 1080 * 1920
+
+    def test_drops_below_threshold(self):
+        # 100x100 box is ~0.48% of 1080p; threshold 1% should drop it.
+        xyxy = np.array([[0, 0, 100, 100]], dtype=np.float32)
+        conf = np.array([0.9])
+        out_xyxy, out_conf = filter_by_area(xyxy, conf, 1.0, self._FRAME_SHAPE)
+        assert out_xyxy.shape == (0, 4)
+        assert out_conf.shape == (0,)
+
+    def test_keeps_above_threshold(self):
+        # 200x200 box is ~1.93% of 1080p; threshold 1% keeps it.
+        xyxy = np.array([[0, 0, 200, 200]], dtype=np.float32)
+        conf = np.array([0.9])
+        out_xyxy, out_conf = filter_by_area(xyxy, conf, 1.0, self._FRAME_SHAPE)
+        assert out_xyxy.shape == (1, 4)
+        np.testing.assert_allclose(out_conf, [0.9])
+
+    def test_zero_threshold_passes_everything(self):
+        xyxy = np.array([[0, 0, 5, 5], [0, 0, 50, 50]], dtype=np.float32)
+        conf = np.array([0.5, 0.6])
+        out_xyxy, out_conf = filter_by_area(xyxy, conf, 0.0, self._FRAME_SHAPE)
+        assert out_xyxy.shape == (2, 4)
+
+    def test_empty_input(self):
+        out_xyxy, out_conf = filter_by_area(
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros((0,), dtype=np.float32),
+            1.0, self._FRAME_SHAPE,
+        )
+        assert out_xyxy.shape == (0, 4)
+        assert out_conf.shape == (0,)
+
+    def test_mixed_results(self):
+        xyxy = np.array(
+            [[0, 0, 100, 100], [0, 0, 300, 300], [0, 0, 50, 50]],
+            dtype=np.float32,
+        )
+        conf = np.array([0.9, 0.8, 0.7])
+        out_xyxy, out_conf = filter_by_area(xyxy, conf, 1.0, self._FRAME_SHAPE)
+        # Only the 300x300 box (~4.3%) survives a 1% threshold.
+        assert out_xyxy.shape == (1, 4)
+        np.testing.assert_allclose(out_conf, [0.8])
+
+
+class TestOverlayTrail:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def test_does_not_mutate(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_trail(frame, [(100, 200), (110, 210)])
+        np.testing.assert_array_equal(frame, original)
+
+    def test_empty_returns_unchanged_copy(self):
+        frame = self._blank()
+        out = overlay_trail(frame, [])
+        np.testing.assert_array_equal(out, frame)
+        assert out is not frame
+
+    def test_draws_when_points(self):
+        frame = self._blank()
+        out = overlay_trail(frame, [(100, 200), (200, 300), (300, 400)])
+        assert not np.array_equal(out, frame)
+        assert out.shape == frame.shape and out.dtype == frame.dtype
+
+
+class TestOverlayKickup:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def test_does_not_mutate(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_kickup(frame, count=3, just_kicked=False)
+        np.testing.assert_array_equal(frame, original)
+
+    def test_draws_count(self):
+        frame = self._blank()
+        out = overlay_kickup(frame, count=7, just_kicked=False)
+        assert not np.array_equal(out, frame)
+
+    def test_flash_color_differs_when_just_kicked(self):
+        frame = self._blank()
+        normal = overlay_kickup(frame, count=5, just_kicked=False)
+        flashed = overlay_kickup(frame, count=5, just_kicked=True)
+        # The two outputs must visibly differ.
+        assert not np.array_equal(normal, flashed)
