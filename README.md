@@ -147,6 +147,27 @@ Tips for accuracy:
   Stage 1 wins (ID tracking, acceleration gate, resolution-aware velocity)
   at full FPS but loses the floor-bounce filter.
 
+## Sound
+
+Each counted kickup plays a short sound effect — useful for kinesthetic
+feedback when you're not staring at the screen. macOS uses `afplay` with
+`/System/Library/Sounds/Pop.aiff` by default; Linux uses `aplay` (you supply
+the file).
+
+```bash
+python detect.py                                       # default Pop.aiff on macOS
+python detect.py --sound-path /System/Library/Sounds/Tink.aiff
+python detect.py --sound-path ~/Music/whistle.wav      # any file afplay can read
+python detect.py --no-sound                            # silent
+```
+
+The player is fire-and-forget (non-blocking `Popen`) so the inference loop
+never stalls on audio. If the playback command fails once (missing binary,
+bad path), the player auto-disables and the loop keeps running.
+
+Rejected bounces (pose gate said no body part nearby) stay silent — only
+credited kickups make a sound.
+
 ## Keys
 
 | Key | Action                          |
@@ -198,6 +219,8 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--proximity-px`  | `80`    | Foot/knee/head proximity radius (also live tunable) |
 | `--pose-model`    | `yolo26n-pose.pt` | Pose checkpoint for body-part gating  |
 | `--no-pose`       | off     | Disable pose-based gating (Stage 1 only)         |
+| `--sound-path`    | `Pop.aiff` (macOS) | Sound played on each counted kickup    |
+| `--no-sound`      | off     | Disable kickup sound effects                     |
 
 ### Workflow toggles
 

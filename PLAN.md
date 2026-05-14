@@ -377,3 +377,34 @@ Both are correctness bugs in the gate logic, not the pose model itself.
 - [x] `detect.py`: replace the inline `nearest_body_part` call with `decide_bounce_credit`; log each bounce decision; pass total keypoint count into the settings overlay.
 - [x] Update `_settings_lines` to render `pose: <name>  N kpts`.
 - [x] Run pytest, commit, push.
+
+---
+
+# Plan: Sound on kickup (round 10)
+
+## Context
+
+User wants audio feedback the instant a kickup is counted. Defaulting to macOS's built-in `/System/Library/Sounds/Pop.aiff` via the `afplay` CLI keeps this dependency-free; on Linux we fall back to `aplay`. The player is fire-and-forget (`subprocess.Popen` without `.wait()`) so the inference loop never blocks on audio.
+
+## Design
+
+- New `soccer_ball/audio.py` exposing `SoundPlayer` — picks the right command per platform, supports custom sound paths, no-op when disabled or when no command is available.
+- `play()` swallows errors and disables itself on the first failure so a missing afplay doesn't crash the loop.
+- Wire into `detect.py`: after `credit_last(part)`, if `kickup.just_kicked` is still True (i.e. the bounce wasn't rejected by the pose gate), call `player.play()`.
+- CLI: `--sound-path PATH`, `--no-sound`. Default sound path is the macOS Pop.aiff if it exists, else falls back to nothing on non-Darwin systems (we log a one-time warning).
+
+## Checklist
+
+- [x] TDD `SoundPlayer`: disabled instance is a no-op; play() spawns the right command via injected `popen_fn`; `FileNotFoundError` from popen disables the player; default sound path on Darwin is Pop.aiff.
+- [x] Implement `SoundPlayer` in `soccer_ball/audio.py`.
+- [x] CLI flags `--sound-path`, `--no-sound` in `detect.py`.
+- [x] After `credit_last` in the loop, play the sound when `kickup.just_kicked`.
+- [x] README — add a "Sound" section.
+- [x] Run pytest, commit, push.
+
+## Critique
+
+- **Risk: afplay process pile-up at very fast kickup rate** — Pop.aiff is ~200ms; even at 5 kickups/sec only ~1-2 procs alive at once. Acceptable.
+- **Risk: file path with spaces** — Popen list-form handles this correctly.
+- **Risk: Linux user without aplay** — `play()` disables on first failure, no crash; we log once.
+- **Risk: user wants per-body-part sounds** — out of scope for round 10. Future work: `--sound-path-foot`, `--sound-path-knee`, `--sound-path-head`.

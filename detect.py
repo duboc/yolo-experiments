@@ -23,6 +23,7 @@ from dataclasses import replace
 import cv2
 import numpy as np
 
+from soccer_ball.audio import SoundPlayer
 from soccer_ball.cameras import (
     format_camera_menu,
     pick_camera_interactive,
@@ -129,6 +130,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Pose checkpoint for body-part gating. Default: yolo26n-pose.pt.")
     p.add_argument("--no-pose", action="store_true",
                    help="Disable pose-based kickup gating (Stage 1 only).")
+
+    # Audio
+    p.add_argument("--sound-path", default=None, dest="sound_path",
+                   help="Path to a sound played on each counted kickup. macOS default: /System/Library/Sounds/Pop.aiff.")
+    p.add_argument("--no-sound", action="store_true", dest="no_sound",
+                   help="Disable kickup sound effects.")
 
     # Workflow toggles
     p.add_argument("--no-tui", action="store_true", help="Skip the pre-loop launch TUI.")
@@ -273,6 +280,9 @@ def _run_loop(
         log.info("Loading pose model %s on device=%s", pose_model_name, device)
         pose_model = YOLO(pose_model_name)
 
+    sound_player = SoundPlayer(sound_path=args.sound_path, enabled=not args.no_sound)
+    log.info("Sound: %s (path=%r)", "enabled" if sound_player.enabled and sound_player._cmd else "disabled", sound_player.sound_path)
+
     fps = FpsMeter()
     main_window = "Soccer Ball Detector (q quit, s save preset, r reset kickups)"
     panel = _try_create_panel(settings, enabled=not args.no_trackbars and not args.no_display)
@@ -399,6 +409,10 @@ def _run_loop(
                             )
                         else:
                             log.info("kickup #%d: kept (%s)", kickup.count, part.value)
+                    # If the bounce was credited (just_kicked still True after credit_last),
+                    # play the sound. Rejected bounces clear just_kicked, so they stay silent.
+                    if kickup.just_kicked:
+                        sound_player.play()
 
                 annotated = overlay_trail(annotated, list(trail))
                 if pose_model is not None and live.show_pose:
