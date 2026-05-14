@@ -108,3 +108,83 @@ soccer_ball/
 - **Risk: MJPG fourcc not supported by some cameras**: Wrap the `set` calls in try/log; OpenCV `set` returns False on failure but doesn't raise.
 - **Risk: --source 0 vs picker ambiguity**: Picker only runs when `--source` was *not* passed. `argparse` default sentinel (`None`) distinguishes "user typed 0" from "user typed nothing".
 - **Risk: FPS overlay covers detections at top-left**: Acceptable; small font, fixed position, user can disable via `--no-fps`.
+
+---
+
+# Plan: Full param exposure (round 3)
+
+## Context
+
+User wants every param tunable. Hybrid approach:
+- **Init-time** params (need a model reload or capture restart) → TUI prompts before the loop.
+- **Live-tunable** params (re-applied each frame) → OpenCV trackbar panel inside the running loop.
+- **Persistence** → JSON presets in `./presets/<name>.json`. `--preset NAME` loads, `s` key saves to the current preset name. A `default` preset auto-loads if present.
+
+## Parameter inventory
+
+**Init-time (TUI + CLI flags, fixed for the run):**
+| Param | Default | Values |
+|---|---|---|
+| `model` | `yolo26l.pt` | any ultralytics name/path |
+| `device` | `auto` | `auto`/`mps`/`cuda`/`cpu` |
+| `source` | (picker) | int / path / URL |
+| `width` | unset | int |
+| `height` | unset | int |
+| `half` | `False` | bool — FP16 on MPS/CUDA |
+| `preset` | `default` | preset name |
+
+**Live-tunable (trackbars, re-read each frame):**
+| Param | Range | Encoding |
+|---|---|---|
+| `conf` | 0.0-1.0 | trackbar 0-100 → /100 |
+| `iou` | 0.0-1.0 | trackbar 0-100 → /100 |
+| `max_det` | 1-300 | direct int |
+| `imgsz` | 320-1280 (×32) | trackbar 10-40 → ×32 |
+| `ball_class` | 0-79 | direct int (COCO classes) |
+| `agnostic_nms` | bool | trackbar 0-1 → bool |
+| `show_fps` | bool | trackbar 0-1 → bool |
+| `show_label` | bool | trackbar 0-1 → bool |
+
+## Precedence
+
+`builtin defaults` ← `preset (if loaded)` ← `CLI flags` ← `TUI overrides` ← `trackbar live changes`
+
+Each layer overlays the previous. `--no-tui` skips the TUI layer; `--no-trackbars` skips the trackbar layer.
+
+## New modules
+
+```
+soccer_ball/
+├── settings.py    # LaunchConfig + RuntimeSettings dataclasses, preset I/O (pure)
+├── tui.py         # prompt_launch_config(input_fn) — testable via input injection
+└── trackbars.py   # encode/decode helpers (pure) + TrackbarPanel cv2 wrapper (thin, untested)
+```
+
+## Checklist
+
+- [x] In `tests/test_settings.py`, write failing tests for: `LaunchConfig` and `RuntimeSettings` dataclass defaults; `RuntimeSettings.to_dict()` / `from_dict()` round-trip; `merge(base, override)` overlay where `override` fields with `None` are skipped; `save_preset` / `load_preset` round-trip in a tmp_path; `load_preset` raises `FileNotFoundError` for unknown name; `list_presets` returns sorted names.
+- [x] In `soccer_ball/settings.py`, implement `LaunchConfig`, `RuntimeSettings`, `merge`, `save_preset`, `load_preset`, `list_presets`. Default presets dir = `./presets`. Make tests pass.
+- [x] In `tests/test_trackbars.py`, write failing tests for the pure encode/decode helpers: `decode_conf(50) == 0.5`, `decode_iou(70) == 0.7`, `decode_imgsz(20) == 640`, `decode_imgsz(11) == 352` (rounding), `encode_settings(RuntimeSettings)` returns the expected dict of trackbar ints, and `decode_trackbars({...}) -> RuntimeSettings` round-trips.
+- [x] In `soccer_ball/trackbars.py`, implement pure encode/decode helpers. Add a `TrackbarPanel` class with `create_in_window(name)`, `current() -> RuntimeSettings`, `apply(settings)`. The cv2 calls live only in the wrapper methods. Make pure tests pass.
+- [x] In `tests/test_tui.py`, write failing tests for `prompt_launch_config(defaults, input_fn)`: blank input keeps the default; provided value overrides; invalid device re-prompts; "y"/"n" handled for `half`; EOF maps to KeyboardInterrupt.
+- [x] In `soccer_ball/tui.py`, implement `prompt_launch_config(defaults, input_fn=input)`. Make tests pass.
+- [x] Extend `detect.py`:
+  - New CLI flags: `--preset NAME` (default `"default"`), `--no-tui`, `--no-trackbars`, `--iou`, `--max-det`, `--imgsz`, `--half`, `--agnostic-nms`.
+  - On startup: load `defaults` → if `--preset` exists, overlay it → overlay parsed CLI flags (only those the user actually set) → if `--no-tui` is off, run TUI to confirm/edit → split into `LaunchConfig` and `RuntimeSettings`.
+  - Build `TrackbarPanel` (unless `--no-trackbars`), seed it from `RuntimeSettings`.
+  - In the loop: read live settings from the panel each frame, pass `conf=`/`iou=`/`max_det=`/`imgsz=`/`agnostic_nms=` into `model.predict`, use `settings.ball_class` in the filter, honour `show_fps`/`show_label` overlays.
+  - Key bindings: `q` quit, `s` save current settings to the active preset name (log the path).
+  - Whenever `ball_class` changes, log `model.names[class_id]` so the user sees what they switched to.
+- [x] Add a small `format_label_with_class(name, conf)` helper in `detector.py` and toggle it via `show_label` (when off, draw box without text).
+- [x] Update `README.md`: TUI walk-through, trackbar list, preset workflow, `s` key, `--preset`/`--no-tui`/`--no-trackbars` flags, precedence rules.
+- [x] Add `presets/` to `.gitignore` (presets are user-local) but commit a `presets/.gitkeep`.
+- [x] Run `pytest -q`. Aim: all green, ~50 tests total.
+
+## Critique pass
+
+- **Risk: cv2 trackbars are flaky on macOS** — `--no-trackbars` opt-out + log a hint when the platform is `darwin` and the panel fails to create.
+- **Risk: model.predict per-call kwargs may be slow if imgsz changes often** — Ultralytics handles dynamic imgsz fine but may re-warmup. Document the slight hitch when dragging the imgsz slider.
+- **Risk: trackbar UX is ugly** — accept it; this is a dev tool. Class name shown in the log on change, not in the trackbar (cv2 limitation).
+- **Risk: precedence order is confusing** — README spells it out, and TUI prompts show the resolved default in brackets so the user always sees the effective value before confirming.
+- **Risk: preset file accidentally checked in** — `.gitignore`s `presets/*.json` (keep `.gitkeep`).
+- **Risk: legacy --conf and --ball-class flags** — keep them as the canonical CLI surface, route them through the same overlay machinery as the new flags. No breaking change.

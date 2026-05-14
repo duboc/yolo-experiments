@@ -46,14 +46,20 @@ _FONT_THICKNESS = 1
 
 
 def annotate_frame(
-    frame: np.ndarray, xyxy: np.ndarray, confs: np.ndarray
+    frame: np.ndarray,
+    xyxy: np.ndarray,
+    confs: np.ndarray,
+    show_label: bool = True,
 ) -> np.ndarray:
-    """Return a copy of ``frame`` with green boxes + labels drawn for each detection."""
+    """Return a copy of ``frame`` with green boxes (and optional labels) per detection."""
     out = frame.copy()
     for (x1, y1, x2, y2), conf in zip(xyxy, confs):
         p1 = (int(x1), int(y1))
         p2 = (int(x2), int(y2))
         cv2.rectangle(out, p1, p2, _BOX_COLOR, _BOX_THICKNESS)
+
+        if not show_label:
+            continue
 
         label = format_label(float(conf))
         (tw, th), baseline = cv2.getTextSize(label, _FONT, _FONT_SCALE, _FONT_THICKNESS)

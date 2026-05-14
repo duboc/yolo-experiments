@@ -124,6 +124,19 @@ class TestAnnotateFrame:
         np.testing.assert_array_equal(out, frame)
         assert out is not frame  # still a copy
 
+    def test_show_label_false_skips_text(self):
+        """With show_label=False, the box-only output must differ from the labelled one."""
+        frame = self._blank()
+        xyxy = np.array([[100, 100, 200, 200]], dtype=np.float32)
+        confs = np.array([0.9])
+
+        with_label = annotate_frame(frame, xyxy, confs, show_label=True)
+        without_label = annotate_frame(frame, xyxy, confs, show_label=False)
+
+        assert not np.array_equal(with_label, without_label)
+        # Box still drawn either way → both differ from the blank input.
+        assert not np.array_equal(without_label, frame)
+
 
 class TestOverlayFps:
     def _blank(self) -> np.ndarray:
