@@ -42,6 +42,7 @@ class TestRuntimeSettingsDefaults:
         assert s.min_area_pct == 1.0
         assert s.proximity_px == 150
         assert s.show_pose is True
+        assert s.show_debug is False
 
 
 class TestRuntimeSettingsRoundTrip:

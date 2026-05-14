@@ -40,6 +40,7 @@ class RuntimeSettings:
     min_area_pct: float = 1.0  # Drop boxes smaller than this % of frame area
     proximity_px: int = 150    # Foot/knee/head proximity radius for kickup gating
     show_pose: bool = True     # Render pose-keypoint overlay
+    show_debug: bool = False   # Render the kickup state-machine debug panel
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

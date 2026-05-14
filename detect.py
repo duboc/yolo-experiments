@@ -41,6 +41,7 @@ from soccer_ball.detector import (
     annotate_frame,
     filter_by_area,
     filter_sports_ball,
+    overlay_debug,
     overlay_fps,
     overlay_kickup,
     overlay_pose,
@@ -137,6 +138,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--no-sound", action="store_true", dest="no_sound",
                    help="Disable kickup sound effects.")
 
+    # Kickup tuning
+    p.add_argument("--acceleration-threshold", type=float, default=0.5,
+                   dest="acceleration_threshold",
+                   help="Min |Δsmoothed-velocity| to count a bounce. Lower = more permissive. Default: 0.5.")
+
     # Workflow toggles
     p.add_argument("--no-tui", action="store_true", help="Skip the pre-loop launch TUI.")
     p.add_argument("--no-trackbars", action="store_true", help="Skip the live trackbar panel.")
@@ -224,10 +230,11 @@ def _settings_lines(
     if hasattr(model, "names"):
         class_name = model.names.get(live.ball_class, "?") if isinstance(model.names, dict) else "?"
     parts = counter.counts_by_part
+    rej = counter.rejected_count
     breakdown = (
-        f"foot:{parts[BodyPart.FOOT]} knee:{parts[BodyPart.KNEE]} head:{parts[BodyPart.HEAD]}"
+        f"foot:{parts[BodyPart.FOOT]} knee:{parts[BodyPart.KNEE]} head:{parts[BodyPart.HEAD]}  rej:{rej}"
         if pose_model_name is not None
-        else "pose off"
+        else f"pose off  rej:{rej}"
     )
     pose_line = (
         f"pose:     {pose_model_name}  ({pose_keypoints_seen} kpts)"
@@ -288,11 +295,13 @@ def _run_loop(
     panel = _try_create_panel(settings, enabled=not args.no_trackbars and not args.no_display)
     last_ball_class: int | None = None
     # Resolution-aware velocity floor + acceleration gate are sized to frame height
-    # at runtime; constructor uses sensible defaults derived from the plan.
+    # at runtime. Acceleration threshold is permissive by default (0.5) so the
+    # counter actually counts on slow / smooth kickups; raise via CLI if
+    # false-positives appear in your scene.
     kickup = KickupCounter(
         min_velocity=1.0,
         min_velocity_pct=0.005,
-        acceleration_threshold=2.0,
+        acceleration_threshold=args.acceleration_threshold,
     )
     trail = MotionTrail(max_len=30)
     ball_tracker = SingleBallTracker(lose_after_frames=15)
@@ -420,6 +429,18 @@ def _run_loop(
                 annotated = overlay_kickup(
                     annotated, kickup.count, kickup.just_kicked, kickup.last_part
                 )
+                if live.show_debug:
+                    threshold = max(1.0, frame.shape[0] * 0.005)
+                    debug_info = {
+                        "state":    kickup.state,
+                        "v":        f"{kickup.smoothed_velocity:+6.1f} / {threshold:4.1f}",
+                        "a":        f"{kickup.last_acceleration:+6.2f} / {args.acceleration_threshold:4.1f}",
+                        "ball":     "yes" if centroid is not None else "no",
+                        "lock":     f"id={ball_tracker.locked_id}" if ball_tracker.locked_id is not None else "unlocked",
+                        "pose":     f"{sum(len(p) for p in body_parts.values())} kpts",
+                        "kickups":  f"{kickup.count}  rej:{kickup.rejected_count}",
+                    }
+                    annotated = overlay_debug(annotated, debug_info)
 
                 fps.tick()
                 if live.show_fps:

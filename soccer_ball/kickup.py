@@ -33,12 +33,25 @@ class KickupCounter:
         self.just_kicked: bool = False
         self.counts_by_part: dict[BodyPart, int] = {bp: 0 for bp in BodyPart}
         self.last_part: BodyPart | None = None
+        self.rejected_count: int = 0
 
         self._last_y: float | None = None
         self._smoothed_v: float = 0.0
         self._prev_smoothed_v: float = 0.0
         self._absence: int = 0
         self._state: str = "NEUTRAL"
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def smoothed_velocity(self) -> float:
+        return self._smoothed_v
+
+    @property
+    def last_acceleration(self) -> float:
+        return self._smoothed_v - self._prev_smoothed_v
 
     def update(self, y: float | None, frame_height: int | None = None) -> None:
         # Clear the one-frame "just kicked" pulse at the start of every update.
@@ -85,12 +98,14 @@ class KickupCounter:
 
         Called by the main loop right after an update where ``just_kicked`` was
         True. Passing None rolls back the bounce (count -= 1, just_kicked = False)
-        so pose-gated rejections don't inflate the counter.
+        so pose-gated rejections don't inflate the counter; ``rejected_count``
+        is bumped so the user can see how many bounces died at the gate.
         """
         if part is None:
             if self.just_kicked and self.count > 0:
                 self.count -= 1
                 self.just_kicked = False
+                self.rejected_count += 1
             self.last_part = None
             return
         self.last_part = part
@@ -101,6 +116,7 @@ class KickupCounter:
         self.just_kicked = False
         self.counts_by_part = {bp: 0 for bp in BodyPart}
         self.last_part = None
+        self.rejected_count = 0
         self._last_y = None
         self._smoothed_v = 0.0
         self._prev_smoothed_v = 0.0

@@ -15,7 +15,7 @@ import numpy as np
 
 
 class SingleBallTracker:
-    def __init__(self, lose_after_frames: int = 15):
+    def __init__(self, lose_after_frames: int = 5):
         self._lose_after = lose_after_frames
         self.locked_id: int | None = None
         self._misses: int = 0
@@ -47,12 +47,11 @@ class SingleBallTracker:
             self._misses = 0
             return int(self.locked_id), xyxy[match_idx]
 
-        # Locked ID missing this frame — register a miss and report no lock.
-        # If the miss counter overflowed, the lock drops here; the next frame
-        # picks the new largest. We do NOT re-lock in the same frame because
-        # the current frame's misses were the reason for losing the lock.
+        # Locked ID missing this frame. Don't starve the kickup state machine —
+        # fall back to the largest available box so the centroid keeps flowing.
+        # Still register the miss so the lock eventually drops if persistent.
         self._register_miss()
-        return None, None
+        return None, _largest_box(xyxy)
 
     def _lock_on_largest(
         self, ids: np.ndarray, xyxy: np.ndarray

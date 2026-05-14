@@ -73,6 +73,7 @@ Then the camera picker, then the live window plus a `Settings` window with track
 | `min_area_pct` | 0–100 → 0.0–10.0%                 | Drop boxes below this % of frame area (kickup focus) |
 | `proximity_px` | 0–300 px (direct)                 | Foot/knee/head proximity radius for pose gating |
 | `show_pose`    | 0/1                               | Render pose keypoint dots + proximity circles    |
+| `show_debug`   | 0/1                               | Render bottom-left kickup-state debug panel      |
 
 Drag a slider, see the effect immediately on the next frame.
 
@@ -146,6 +147,45 @@ Tips for accuracy:
 - If your machine can't keep up with two models, `--no-pose` keeps the
   Stage 1 wins (ID tracking, acceleration gate, resolution-aware velocity)
   at full FPS but loses the floor-bounce filter.
+
+## Debug overlay (when the count looks wrong)
+
+If kickups stop counting and you can't tell why, flip `show_debug` (trackbar)
+or just enable it via a preset. A bottom-left panel appears with the
+state-machine internals:
+
+```
+state    FALLING
+v        +12.3 /  5.4
+a        -0.45 /  0.5
+ball     yes
+lock     id=3
+pose     3 kpts
+kickups  7  rej:2
+```
+
+- `state`: NEUTRAL → FALLING → RISING — a bounce only counts on the
+  FALLING→RISING transition.
+- `v`: smoothed vertical velocity / threshold (resolution-aware). For a real
+  kickup this should swing from large positive to large negative.
+- `a`: per-frame acceleration / `--acceleration-threshold`. The bounce only
+  counts if `|a| ≥ threshold`. Lower the threshold (e.g. `--acceleration-threshold 0.2`)
+  for slow / smooth kickups; raise it if you see false positives.
+- `ball`: was the ball detected this frame.
+- `lock`: which ByteTrack ID the SingleBallTracker is locked onto.
+- `pose`: total keypoint count across all visible persons.
+- `kickups`: aggregate count + rejected count (rejected = bounce detected
+  but pose gate said no body part nearby).
+
+Common diagnoses:
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `v` stays near 0 | Ball detection drops too often | Lower `min_area_pct`, raise `conf` threshold from camera, or check lighting |
+| `state` never reaches RISING | Velocity threshold too high | Lower `min_velocity_pct` (advanced) or just confirm on screen the ball is actually moving fast enough |
+| `state` reaches RISING but no count | `|a|` below `--acceleration-threshold` | Drop `--acceleration-threshold` to 0.2 |
+| `rej` increments while `kickups` stays | Pose gate rejecting | Raise `proximity_px` trackbar or pass `--no-pose` to disable gating |
+| `pose` stays at 0 | Pose model can't see you | Move closer to the camera, improve lighting, or try `--pose-model yolo26s-pose.pt` |
 
 ## Sound
 
@@ -221,6 +261,7 @@ skips the trackbar panel; combine both for fully scripted runs.
 | `--no-pose`       | off     | Disable pose-based gating (Stage 1 only)         |
 | `--sound-path`    | `Pop.aiff` (macOS) | Sound played on each counted kickup    |
 | `--no-sound`      | off     | Disable kickup sound effects                     |
+| `--acceleration-threshold` | `0.5` | Min |Δsmoothed-velocity| to count a bounce |
 
 ### Workflow toggles
 

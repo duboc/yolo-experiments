@@ -227,6 +227,41 @@ _POSE_COLORS = {
 }
 
 
+_DEBUG_BG = (0, 0, 0)
+_DEBUG_TEXT = (200, 255, 200)
+_DEBUG_FONT_SCALE = 0.5
+_DEBUG_LINE_HEIGHT = 18
+_DEBUG_PAD = 8
+
+
+def overlay_debug(frame: np.ndarray, info: dict[str, str]) -> np.ndarray:
+    """Render a small bottom-left debug panel showing kickup state-machine internals."""
+    out = frame.copy()
+    if not info:
+        return out
+    lines = [f"{k:<8} {v}" for k, v in info.items()]
+    sizes = [cv2.getTextSize(l, _FONT, _DEBUG_FONT_SCALE, 1) for l in lines]
+    max_w = max(w for (w, _h), _b in sizes)
+    block_w = max_w + 2 * _DEBUG_PAD
+    block_h = _DEBUG_LINE_HEIGHT * len(lines) + _DEBUG_PAD
+
+    h = out.shape[0]
+    x1 = 5
+    y2 = h - 5
+    y1 = max(0, y2 - block_h)
+    x2 = x1 + block_w
+
+    bg = out.copy()
+    cv2.rectangle(bg, (x1, y1), (x2, y2), _DEBUG_BG, cv2.FILLED)
+    cv2.addWeighted(bg, 0.6, out, 0.4, 0, out)
+
+    for i, line in enumerate(lines):
+        baseline_y = y1 + _DEBUG_PAD + _DEBUG_LINE_HEIGHT * i + 12
+        cv2.putText(out, line, (x1 + _DEBUG_PAD, baseline_y),
+                    _FONT, _DEBUG_FONT_SCALE, _DEBUG_TEXT, 1, cv2.LINE_AA)
+    return out
+
+
 def overlay_pose(
     frame: np.ndarray,
     parts: dict[BodyPart, list[tuple[int, int]]],

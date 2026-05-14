@@ -13,7 +13,7 @@ import cv2
 from soccer_ball.settings import RuntimeSettings
 
 # Trackbar names (also used as ids when reading positions).
-_NAMES = ["conf", "iou", "max_det", "imgsz", "ball_class", "agnostic_nms", "show_fps", "show_label", "show_settings", "min_area_pct", "proximity_px", "show_pose"]
+_NAMES = ["conf", "iou", "max_det", "imgsz", "ball_class", "agnostic_nms", "show_fps", "show_label", "show_settings", "min_area_pct", "proximity_px", "show_pose", "show_debug"]
 
 _IMGSZ_STEP = 32
 _IMGSZ_MIN = 320  # = 10 * 32
@@ -32,6 +32,7 @@ _TRACKBAR_MAX = {
     "min_area_pct": 100,  # 0..100 → 0.0..10.0 percent (×10 step = 0.1%)
     "proximity_px": 300,  # direct pixels
     "show_pose": 1,
+    "show_debug": 1,
 }
 
 
@@ -70,6 +71,7 @@ def encode_settings(s: RuntimeSettings) -> dict[str, int]:
         "min_area_pct": int(round(s.min_area_pct * 10)),
         "proximity_px": int(s.proximity_px),
         "show_pose": int(s.show_pose),
+        "show_debug": int(s.show_debug),
     }
 
 
@@ -87,6 +89,7 @@ def decode_trackbars(positions: dict[str, int]) -> RuntimeSettings:
         min_area_pct=decode_min_area_pct(positions["min_area_pct"]),
         proximity_px=int(positions["proximity_px"]),
         show_pose=decode_bool(positions["show_pose"]),
+        show_debug=decode_bool(positions["show_debug"]),
     )
 
 

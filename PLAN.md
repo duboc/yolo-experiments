@@ -408,3 +408,57 @@ User wants audio feedback the instant a kickup is counted. Defaulting to macOS's
 - **Risk: file path with spaces** — Popen list-form handles this correctly.
 - **Risk: Linux user without aplay** — `play()` disables on first failure, no crash; we log once.
 - **Risk: user wants per-body-part sounds** — out of scope for round 10. Future work: `--sound-path-foot`, `--sound-path-knee`, `--sound-path-head`.
+
+---
+
+# Plan: Counter reliability + live debug overlay (round 11)
+
+## Context
+
+User reports the kickup counter is broken again. Round 9 softened the pose gate (no false rejections when pose finds nobody) but two stricter behaviours from round 7 are still in place and likely to be the culprits:
+
+1. **SingleBallTracker is too strict.** When ByteTrack reassigns the ball's ID mid-juggle (common with motion blur and brief detection drops), the tracker stays locked on the old ID and returns `(None, None)` for up to `lose_after_frames=15` frames (~0.5s at 30fps). During this gap the kickup state machine receives no updates, and any bounce that happens is silently lost.
+
+2. **`acceleration_threshold=2.0` in `detect.py`** (round 7) gates every bounce on the velocity-change magnitude. For slow kickups or when the smoothing flattens the curve, real bounces can fall below 2.0 and never count.
+
+Worse: the user has no live visibility into *which* stage is failing — they just see "kickups: 0" and have to guess. So round 11 has two halves: fix the bugs, and ship a debug overlay so future tuning is data-driven.
+
+## Design
+
+**Bug fixes:**
+- `SingleBallTracker` degrades gracefully — when the locked ID is missing this frame but other balls are visible, return the largest box (don't return None). Lock is a hint, not a hard requirement.
+- Reduce `lose_after_frames` default from 15 to 5.
+- Lower default `acceleration_threshold` in `detect.py` from 2.0 to 0.5. Expose as `--acceleration-threshold` so power users can tighten it back up if false-positives appear.
+
+**Diagnostics:**
+- `KickupCounter` exposes its internals as read-only properties: `state`, `smoothed_velocity`, `last_acceleration`, `rejected_count`. No behavioural change.
+- `KickupCounter.credit_last(None)` increments `rejected_count`.
+- New `overlay_debug(frame, info: dict)` renders a small bottom-left panel showing state, velocity vs threshold, acceleration vs threshold, ball-detected, locked id, pose kpts, last decision. Toggle via `show_debug` trackbar (default off — keep the default UI clean).
+- Settings overlay's kickup line gains `(rejected: N)` so user sees how many bounces died at the pose gate without opening the debug panel.
+
+## Checklist
+
+- [x] TDD: `SingleBallTracker.update` returns largest box when locked ID missing but other detections present.
+- [x] TDD: `SingleBallTracker.update` still tracks the locked ID across the same-frame fallback (lock not dropped on first miss).
+- [x] Update `SingleBallTracker` default `lose_after_frames` to 5.
+- [x] TDD: `KickupCounter` exposes `state`, `smoothed_velocity`, `last_acceleration`, `rejected_count`.
+- [x] TDD: `credit_last(None)` increments `rejected_count`.
+- [x] Implement diagnostic properties + rejected_count in `KickupCounter`.
+- [x] TDD: `RuntimeSettings.show_debug` default False; trackbar encode/decode round-trip.
+- [x] Add `show_debug` field + trackbar.
+- [x] TDD: `overlay_debug(frame, info)` immutable, renders something for non-empty info, returns unchanged copy for empty info.
+- [x] Implement `overlay_debug` in `detector.py`.
+- [x] `detect.py`:
+  - Lower kickup constructor `acceleration_threshold` to 0.5.
+  - Add `--acceleration-threshold` CLI flag override.
+  - Build a `debug_info` dict per frame (state, velocity, threshold, acceleration, ball detected, lock id, pose kpts, last decision).
+  - Render `overlay_debug` when `live.show_debug`.
+  - Append `(rejected: N)` to settings overlay kickup line.
+- [x] Tests + commit + push.
+
+## Critique
+
+- **Risk: lowering acceleration_threshold to 0.5 introduces false positives** — exposed as CLI flag for tuning; debug overlay shows the value so user can dial it back.
+- **Risk: 13th trackbar makes UI cluttered** — keep show_debug default off so panel only appears on demand.
+- **Risk: debug panel covers detections** — bottom-left, fixed small size, toggleable; won't overlap KICKUPS center-top.
+- **Risk: SingleBallTracker degradation re-introduces ball-swap jumps in multi-ball scenes** — accept; user is single-ball juggling. Document.

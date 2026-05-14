@@ -12,6 +12,7 @@ from soccer_ball.detector import (
     filter_by_area,
     filter_sports_ball,
     format_label,
+    overlay_debug,
     overlay_fps,
     overlay_kickup,
     overlay_pose,
@@ -345,3 +346,47 @@ class TestOverlayPose:
         out = overlay_pose(frame, self._parts(), proximity_px=80)
         assert not np.array_equal(out, frame)
         assert out.shape == frame.shape and out.dtype == frame.dtype
+
+
+class TestOverlayDebug:
+    def _blank(self) -> np.ndarray:
+        return np.zeros((480, 640, 3), dtype=np.uint8)
+
+    def _info(self) -> dict[str, str]:
+        return {
+            "state": "FALLING",
+            "v": "12.3 / 5.4",
+            "a": "-1.2 / 0.5",
+            "ball": "yes",
+            "lock": "id=3",
+            "pose": "3 kpts",
+            "decision": "counted (foot)",
+        }
+
+    def test_does_not_mutate(self):
+        frame = self._blank()
+        original = frame.copy()
+        overlay_debug(frame, self._info())
+        np.testing.assert_array_equal(frame, original)
+
+    def test_empty_returns_unchanged_copy(self):
+        frame = self._blank()
+        out = overlay_debug(frame, {})
+        np.testing.assert_array_equal(out, frame)
+        assert out is not frame
+
+    def test_draws_when_info_present(self):
+        frame = self._blank()
+        out = overlay_debug(frame, self._info())
+        assert not np.array_equal(out, frame)
+        assert out.shape == frame.shape and out.dtype == frame.dtype
+
+    def test_renders_in_bottom_left_quadrant(self):
+        frame = self._blank()
+        out = overlay_debug(frame, self._info())
+        # Top-right quadrant (settings overlay's territory) must be untouched.
+        h, w = frame.shape[:2]
+        np.testing.assert_array_equal(
+            out[: h // 2, w // 2 :],
+            frame[: h // 2, w // 2 :],
+        )

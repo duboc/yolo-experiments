@@ -201,6 +201,60 @@ class TestKickupBodyPartCredit:
         assert c.last_part is None
 
 
+class TestKickupCounterDiagnostics:
+    def test_starts_in_neutral_state(self):
+        c = KickupCounter()
+        assert c.state == "NEUTRAL"
+        assert c.smoothed_velocity == 0.0
+        assert c.last_acceleration == 0.0
+        assert c.rejected_count == 0
+
+    def test_state_transitions_on_motion(self):
+        c = KickupCounter(min_velocity=0.5)
+        for y in range(100, 200, 10):
+            c.update(y=float(y))
+        assert c.state == "FALLING"
+        assert c.smoothed_velocity > 0
+
+    def test_velocity_and_acceleration_exposed(self):
+        c = KickupCounter(min_velocity=0.5)
+        c.update(y=100.0)
+        c.update(y=120.0)
+        c.update(y=145.0)
+        # smoothed_velocity should reflect the EMA
+        assert c.smoothed_velocity > 0
+        # last_acceleration is set after each update with a new y
+        assert c.last_acceleration != 0
+
+    def test_credit_last_none_increments_rejected_count(self):
+        from soccer_ball.pose import BodyPart
+        c = KickupCounter()
+        # Trigger one bounce
+        for y in range(100, 500, 10):
+            c.update(y=float(y))
+        for y in range(500, 100, -10):
+            c.update(y=float(y))
+            if c.just_kicked:
+                break
+        assert c.just_kicked is True
+        c.credit_last(None)
+        assert c.rejected_count == 1
+        assert c.count == 0
+
+    def test_rejected_count_resets_on_full_reset(self):
+        c = KickupCounter()
+        for y in range(100, 500, 10):
+            c.update(y=float(y))
+        for y in range(500, 100, -10):
+            c.update(y=float(y))
+            if c.just_kicked:
+                break
+        c.credit_last(None)
+        assert c.rejected_count == 1
+        c.reset()
+        assert c.rejected_count == 0
+
+
 class TestMotionTrail:
     def test_starts_empty(self):
         t = MotionTrail(max_len=10)

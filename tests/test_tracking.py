@@ -54,16 +54,20 @@ class TestFollowLockedId:
         assert locked_id == 3
         np.testing.assert_array_equal(locked_box, boxes2[0])
 
-    def test_returns_none_when_locked_id_temporarily_missing(self):
+    def test_falls_back_to_largest_when_locked_id_missing(self):
+        """When the locked ID disappears (ByteTrack reassigned it) but other balls
+        are still in frame, return the largest available box rather than None.
+        The lock is a hint, not a hard requirement — we never starve the kickup
+        state machine just because the tracker lost an ID."""
         t = SingleBallTracker(lose_after_frames=5)
         t.update(ids=np.array([3]), xyxy=_xyxy([0, 0, 100, 100]))
-        # Frame 2: id=3 missing, only id=7 present
+        # Frame 2: id=3 missing, only id=7 present (much bigger).
         locked_id, locked_box = t.update(
-            ids=np.array([7]), xyxy=_xyxy([0, 0, 50, 50])
+            ids=np.array([7]), xyxy=_xyxy([0, 0, 200, 200])
         )
-        assert locked_id is None
-        assert locked_box is None
-        # State preserved — id=3 still tracked
+        # Returned the largest available box, not None.
+        np.testing.assert_array_equal(locked_box, _xyxy([0, 0, 200, 200])[0])
+        # Lock NOT silently changed — we still want to re-lock on id=3 if it returns.
         assert t.locked_id == 3
 
 
